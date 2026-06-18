@@ -138,15 +138,20 @@ static int find_match(const uint8_t *d,int n,int pos,int *head,int *prev,int *ou
 /* ---------- 한 블록 압축 (LZ77 lazy matching + AC) ---------- */
 static void compress_block(const uint8_t *d,int n,Buf *out){
     BW bw={out,0,0};
-    FM flag,lit,len,dh,dm,dl;
-    fm_init(&flag,3); fm_init(&lit,256); fm_init(&len,256); fm_init(&dh,256); fm_init(&dm,256); fm_init(&dl,256);
+    FM flag,len,dh,dm,dl;
+    FM *lit_ctx=malloc(256*sizeof(FM));               /* order-1: 문맥(앞 글자)별 리터럴 모델 */
+    fm_init(&flag,3); fm_init(&len,256); fm_init(&dh,256); fm_init(&dm,256); fm_init(&dl,256);
+    for(int k=0;k<256;k++) fm_init(&lit_ctx[k],256);
     AE e={0,MASKV,0,&bw};
     int *head=malloc(HSIZE*sizeof(int)); for(int x=0;x<HSIZE;x++) head[x]=-1;
     int *prev=malloc((n>0?n:1)*sizeof(int));
+    int pb=0;                                          /* 직전 출력 바이트(문맥) */
 
     #define INSERT(p) do{ if((p)+MIN_MATCH<=n){ uint32_t _h=hash3(d+(p)); prev[(p)]=head[_h]; head[_h]=(p); } }while(0)
-    #define EMIT_MATCH(L,D) do{ ae_encode(&e,&flag,1); ae_encode(&e,&len,(L)-MIN_MATCH); \
-        int _dd=(D)-1; ae_encode(&e,&dh,(_dd>>16)&0xFF); ae_encode(&e,&dm,(_dd>>8)&0xFF); ae_encode(&e,&dl,_dd&0xFF); }while(0)
+    #define EMIT_LIT(B) do{ ae_encode(&e,&flag,0); ae_encode(&e,&lit_ctx[pb],(B)); pb=(B); }while(0)
+    #define EMIT_MATCH(L,D,LASTPOS) do{ ae_encode(&e,&flag,1); ae_encode(&e,&len,(L)-MIN_MATCH); \
+        int _dd=(D)-1; ae_encode(&e,&dh,(_dd>>16)&0xFF); ae_encode(&e,&dm,(_dd>>8)&0xFF); ae_encode(&e,&dl,_dd&0xFF); \
+        pb=d[(LASTPOS)]; }while(0)
 
     int i=0, have_prev=0, prev_len=0, prev_dist=0, prev_pos=0;
     while(i<n){
@@ -154,44 +159,52 @@ static void compress_block(const uint8_t *d,int n,Buf *out){
         INSERT(i);                       /* 자기 자신 매칭 방지 위해 탐색 후 삽입 */
         if(have_prev){
             if(cur_len>prev_len){        /* i+1이 더 김 -> 이전 시작 바이트는 리터럴 */
-                ae_encode(&e,&flag,0); ae_encode(&e,&lit,d[prev_pos]);
+                EMIT_LIT(d[prev_pos]);
                 prev_len=cur_len; prev_dist=cur_dist; prev_pos=i; i++;
             } else {                     /* 이전 매치 확정 */
-                EMIT_MATCH(prev_len,prev_dist);
+                EMIT_MATCH(prev_len,prev_dist,prev_pos+prev_len-1);
                 int end=prev_pos+prev_len;
                 for(int p=i+1;p<end;p++) INSERT(p);
                 i=end; have_prev=0;
             }
         } else {
             if(cur_len>=MIN_MATCH){ have_prev=1; prev_len=cur_len; prev_dist=cur_dist; prev_pos=i; i++; }
-            else { ae_encode(&e,&flag,0); ae_encode(&e,&lit,d[i]); i++; }
+            else { EMIT_LIT(d[i]); i++; }
         }
     }
-    if(have_prev) EMIT_MATCH(prev_len,prev_dist);
+    if(have_prev) EMIT_MATCH(prev_len,prev_dist,prev_pos+prev_len-1);
     ae_encode(&e,&flag,2);
     ae_finish(&e); bw_finish(&bw);
     #undef INSERT
+    #undef EMIT_LIT
     #undef EMIT_MATCH
-    free(head); free(prev);
+    free(head); free(prev); free(lit_ctx);
 }
 
 /* ---------- 한 블록 해제 ---------- */
 static void decompress_block(const uint8_t *p,int plen,Buf *out){
     BR br={p,(size_t)plen,0,0,0};
-    FM flag,lit,len,dh,dm,dl;
-    fm_init(&flag,3); fm_init(&lit,256); fm_init(&len,256); fm_init(&dh,256); fm_init(&dm,256); fm_init(&dl,256);
+    FM flag,len,dh,dm,dl;
+    FM *lit_ctx=malloc(256*sizeof(FM));
+    fm_init(&flag,3); fm_init(&len,256); fm_init(&dh,256); fm_init(&dm,256); fm_init(&dl,256);
+    for(int k=0;k<256;k++) fm_init(&lit_ctx[k],256);
     AD d; ad_init(&d,&br);
+    int pb=0;
     for(;;){
         int f=ad_decode(&d,&flag);
         if(f==2) break;
-        if(f==0){ buf_push(out,(uint8_t)ad_decode(&d,&lit)); }
+        if(f==0){
+            int b=ad_decode(&d,&lit_ctx[pb]); buf_push(out,(uint8_t)b); pb=b;
+        }
         else{
             int l=ad_decode(&d,&len)+MIN_MATCH;
             int dd=(ad_decode(&d,&dh)<<16)|(ad_decode(&d,&dm)<<8)|ad_decode(&d,&dl);
             size_t start=out->len-(size_t)(dd+1);
             for(int k=0;k<l;k++){ uint8_t v=out->buf[start+k]; buf_push(out,v); }
+            pb=out->buf[out->len-1];
         }
     }
+    free(lit_ctx);
 }
 
 /* ---------- 전체 압축/해제 (블록 framing) ---------- */

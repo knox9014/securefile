@@ -194,15 +194,19 @@ def lz77_parse(data: bytes):
 # ===== 한 블록 압축 (LZ77 + 산술부호화) =====
 def _compress_block(data: bytes) -> bytes:
     flag = FreqModel(3)      # 0=리터럴, 1=매치, 2=끝
-    lit = FreqModel(256)
+    # order-1 문맥 모델: 직전 출력 바이트(문맥)별로 리터럴 확률표를 따로 둠
+    lit_ctx = [FreqModel(256) for _ in range(256)]
     length = FreqModel(256)  # (길이-3)
     dist_hi = FreqModel(256)
     dist_mid = FreqModel(256)
     dist_lo = FreqModel(256)
     enc = ArithmeticEncoder()
+    prev_byte = 0; out_pos = 0
     for tok in lz77_parse(data):
         if tok[0] == 0:
-            enc.encode(flag, 0); enc.encode(lit, tok[1])
+            b = tok[1]
+            enc.encode(flag, 0); enc.encode(lit_ctx[prev_byte], b)
+            out_pos += 1; prev_byte = b
         else:
             _, l, d = tok
             enc.encode(flag, 1)
@@ -211,26 +215,32 @@ def _compress_block(data: bytes) -> bytes:
             enc.encode(dist_hi, (dd >> 16) & 0xFF)
             enc.encode(dist_mid, (dd >> 8) & 0xFF)
             enc.encode(dist_lo, dd & 0xFF)
+            out_pos += l; prev_byte = data[out_pos - 1]   # 매치의 마지막 바이트가 다음 문맥
     enc.encode(flag, 2)      # 끝 표시
     return enc.finish()
 
 
 def _decompress_block(blob: bytes) -> bytes:
-    flag = FreqModel(3); lit = FreqModel(256); length = FreqModel(256)
+    flag = FreqModel(3)
+    lit_ctx = [FreqModel(256) for _ in range(256)]
+    length = FreqModel(256)
     dist_hi = FreqModel(256); dist_mid = FreqModel(256); dist_lo = FreqModel(256)
     dec = ArithmeticDecoder(blob)
     out = bytearray()
+    prev_byte = 0
     while True:
         f = dec.decode(flag)
         if f == 2: break
         if f == 0:
-            out.append(dec.decode(lit))
+            b = dec.decode(lit_ctx[prev_byte])
+            out.append(b); prev_byte = b
         else:
             l = dec.decode(length) + MIN_MATCH
             dd = (dec.decode(dist_hi) << 16) | (dec.decode(dist_mid) << 8) | dec.decode(dist_lo)
             start = len(out) - (dd + 1)
             for k in range(l):           # 겹치는 복사도 바이트 단위로 안전
                 out.append(out[start + k])
+            prev_byte = out[-1]
     return bytes(out)
 
 
