@@ -81,9 +81,10 @@ def decrypt_bytes(blob: bytes, password: str) -> bytes:
     return bytes(out)
 
 
-def pack(folder: str, out_path: str, password: str = ""):
-    """폴더 → 파일별 최적 압축 → (비밀번호 있으면) 암호화 → 한 파일."""
-    spk, report = autopack.pack_folder(folder)
+def pack(folder: str, out_path: str, password: str = "", mode: str = "max"):
+    """폴더 → 파일별 최적 압축 → (비밀번호 있으면) 암호화 → 한 파일.
+    mode: 'fast' | 'balanced' | 'max'"""
+    spk, report = autopack.pack_folder(folder, mode)
     blob = encrypt_bytes(spk, password) if password else spk
     with open(out_path, "wb") as f:
         f.write(blob)

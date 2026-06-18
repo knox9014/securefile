@@ -110,26 +110,35 @@ def _best_among(methods, data: bytes):
     return best_id, best
 
 
-def compress(data: bytes):
-    """가장 작게 나오는 방식을 골라 압축. (결과, 선택된 방식id) 반환."""
+def _finalize(method: int, payload: bytes, data: bytes):
+    if len(payload) >= len(data):       # 압축이 손해면 원본 저장
+        return MAGIC + bytes([STORE]) + data, STORE
+    return MAGIC + bytes([method]) + payload, method
+
+
+def compress(data: bytes, mode: str = "max"):
+    """모드별로 압축. (결과, 선택된 방식id) 반환.
+    mode: 'fast'(zstd 빠름) | 'balanced'(zstd 고압축) | 'max'(전체 시험, 최소 선택)"""
     # 1) 사전 판단: 샘플 엔트로피가 너무 높으면 압축 시도 자체를 생략
     if len(data) >= 512 and _entropy(data[:SAMPLE]) >= ENTROPY_SKIP:
         return MAGIC + bytes([STORE]) + data, STORE
 
+    # 2) 빠르게/균형: 단일 zstd (압축률 소폭 양보, 수백 배 빠름)
+    if mode in ("fast", "balanced") and zstandard is not None:
+        level = 6 if mode == "fast" else 19
+        payload = zstandard.ZstdCompressor(level=level, threads=THREADS).compress(data)
+        return _finalize(ZSTD, payload, data)
+
+    # 3) 최대압축: 후보 전체를 시험해 최소 선택
     lib = _available_libs()
     if len(data) <= TRYALL_MAX:
-        # 작은 파일: 전체를 모든 방식으로 시험(우리 압축기도 포함) → 진짜 최소 선택
         methods = lib + ([OURS] if len(data) <= OURS_MAX else [])
         best_id, best = _best_among(methods, data)
     else:
-        # 큰 파일: 샘플로 방식만 결정 → 전체는 승자 방식으로 1회만 압축(속도↑)
-        win_id, _ = _best_among(lib, data[:SAMPLE])
+        win_id, _ = _best_among(lib, data[:SAMPLE])   # 큰 파일은 샘플로 결정
         best = _compress_with(win_id, data)
         best_id = win_id
-        if len(best) >= len(data):     # 그래도 손해면 저장
-            best_id, best = STORE, data
-
-    return MAGIC + bytes([best_id]) + best, best_id
+    return _finalize(best_id, best, data)
 
 
 def decompress(blob: bytes) -> bytes:
@@ -159,7 +168,7 @@ def decompress(blob: bytes) -> bytes:
 ARCHIVE_MAGIC = b"SPK1"
 
 
-def pack_folder(root: str):
+def pack_folder(root: str, mode: str = "max"):
     """폴더 안 모든 파일을 '각자 최적 방식'으로 압축해 아카이브 바이트로 묶는다.
     (아카이브 바이트, [(상대경로, 방식, 원본크기, 압축크기), ...]) 반환."""
     root = root.rstrip("/\\")
@@ -170,7 +179,7 @@ def pack_folder(root: str):
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, root).replace("\\", "/")
             data = open(full, "rb").read()
-            blob, mid = compress(data)               # 파일마다 개별 최적 선택
+            blob, mid = compress(data, mode)         # 파일마다 개별 최적 선택
             entries.append((rel, blob))
             report.append((rel, NAMES[mid], len(data), len(blob)))
 
