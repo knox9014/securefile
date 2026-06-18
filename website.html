@@ -327,6 +327,19 @@ $("genKey").onclick=genSecureKey;
 $("copyKey").onclick=async()=>{const v=$("pw").value;if(!v)return setStatus("복사할 키가 없습니다.","err");
   try{await navigator.clipboard.writeText(v);setStatus("보안키를 클립보드에 복사했습니다.","ok");}catch(e){setStatus("복사 실패 — 직접 선택해 복사하세요.","err");}};
 $("goBtn").onclick=doProcess;$("openBtn").onclick=doOpen;
+
+// 앵커 링크(지금 사용하기/네비)를 JS로 확실히 스크롤 + 강조
+document.querySelectorAll('a[href^="#"]').forEach(a=>{
+  a.addEventListener("click",e=>{
+    const t=document.getElementById(a.getAttribute("href").slice(1));
+    if(!t)return; e.preventDefault();
+    t.scrollIntoView({behavior:"smooth",block:"start"});
+    const card=document.querySelector(".tool-card");
+    if(t.id==="tool"&&card){ card.style.transition="box-shadow .3s"; const o=card.style.boxShadow;
+      card.style.boxShadow="0 0 0 3px var(--accent), 0 20px 60px rgba(0,0,0,.45)";
+      setTimeout(()=>card.style.boxShadow=o,900); }
+  });
+});
 syncToggle();loadArgon2();
 </script>
 </body>
