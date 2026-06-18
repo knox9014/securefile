@@ -26,12 +26,23 @@ import lzma
 
 import mycompress
 
+try:
+    import zstandard            # 속도+압축률 스위트 스폿, 멀티스레드 내장
+except ImportError:
+    zstandard = None
+try:
+    import brotli               # 텍스트/웹 데이터에 강함
+except ImportError:
+    brotli = None
+
 MAGIC = b"APK1"
-STORE, ZLIB, BZ2, LZMA, OURS = 0, 1, 2, 3, 4
-NAMES = {STORE: "store", ZLIB: "zlib", BZ2: "bz2", LZMA: "lzma", OURS: "ours"}
+STORE, ZLIB, BZ2, LZMA, OURS, ZSTD, BROTLI = 0, 1, 2, 3, 4, 5, 6
+NAMES = {STORE: "store", ZLIB: "zlib", BZ2: "bz2", LZMA: "lzma",
+         OURS: "ours", ZSTD: "zstd", BROTLI: "brotli"}
+THREADS = os.cpu_count() or 1
 
 ENTROPY_SKIP = 7.92        # 이 이상이면 사실상 압축 불가 → 바로 저장
-OURS_MAX = 4 << 20         # 우리 압축기는 느리므로 이 크기까지만 후보에 포함
+OURS_MAX = 64 << 10        # 우리 압축기는 느리므로 아주 작은 파일에만 후보로(효율 우선)
 SAMPLE = 1 << 16           # 엔트로피 추정용 샘플 크기
 
 
@@ -58,9 +69,24 @@ def _compress_with(method: int, data: bytes) -> bytes:
         return bz2.compress(data, 9)
     if method == LZMA:
         return lzma.compress(data, preset=9)
+    if method == ZSTD:
+        # 멀티스레드(전 코어) + 높은 레벨 → lzma급 압축률을 훨씬 빠르게
+        return zstandard.ZstdCompressor(level=19, threads=THREADS).compress(data)
+    if method == BROTLI:
+        q = 11 if len(data) <= (4 << 20) else 9   # 큰 파일은 품질 낮춰 속도 확보
+        return brotli.compress(data, quality=q)
     if method == OURS:
         return mycompress.compress(data)
     raise ValueError("unknown method")
+
+
+def _available_libs():
+    libs = [ZLIB, BZ2, LZMA]
+    if zstandard is not None:
+        libs.append(ZSTD)
+    if brotli is not None:
+        libs.append(BROTLI)
+    return libs
 
 
 TRYALL_MAX = 2 << 20       # 이 크기 이하: 전체를 모든 방식으로 시험(가장 정확)
@@ -84,7 +110,7 @@ def compress(data: bytes):
     if len(data) >= 512 and _entropy(data[:SAMPLE]) >= ENTROPY_SKIP:
         return MAGIC + bytes([STORE]) + data, STORE
 
-    lib = [ZLIB, BZ2, LZMA]
+    lib = _available_libs()
     if len(data) <= TRYALL_MAX:
         # 작은 파일: 전체를 모든 방식으로 시험(우리 압축기도 포함) → 진짜 최소 선택
         methods = lib + ([OURS] if len(data) <= OURS_MAX else [])
@@ -113,6 +139,10 @@ def decompress(blob: bytes) -> bytes:
         return bz2.decompress(payload)
     if method == LZMA:
         return lzma.decompress(payload)
+    if method == ZSTD:
+        return zstandard.ZstdDecompressor().decompress(payload)
+    if method == BROTLI:
+        return brotli.decompress(payload)
     if method == OURS:
         return mycompress.decompress(payload)
     raise ValueError(f"알 수 없는 방식 id: {method}")
