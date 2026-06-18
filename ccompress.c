@@ -11,11 +11,8 @@
 #include <stdint.h>
 #include <string.h>
 
-#define PREC      32
-#define HALF      (1ULL<<31)
-#define QUARTER   (1ULL<<30)
-#define THREE_Q   (3ULL<<30)
-#define MASKV     0xFFFFFFFFULL
+#define TOP       (1u<<24)
+#define BOT       (1u<<16)
 #define MAX_TOTAL (1<<16)
 
 #define WINDOW    (1<<20)
@@ -37,21 +34,6 @@ static void buf_append(Buf *b, const uint8_t *d, size_t n){
     memcpy(b->buf+b->len, d, n); b->len+=n;
 }
 
-/* ---------- 비트 입출력 (MSB first) ---------- */
-typedef struct { Buf *out; uint8_t acc; int nbits; } BW;
-static void bw_bit(BW *w,int bit){
-    w->acc=(uint8_t)((w->acc<<1)|(bit&1));
-    if(++w->nbits==8){ buf_push(w->out,w->acc); w->acc=0; w->nbits=0; }
-}
-static void bw_finish(BW *w){
-    if(w->nbits){ w->acc=(uint8_t)(w->acc<<(8-w->nbits)); buf_push(w->out,w->acc); w->acc=0; w->nbits=0; }
-}
-typedef struct { const uint8_t *data; size_t len,pos; uint8_t acc; int nbits; } BR;
-static int br_bit(BR *r){
-    if(r->nbits==0){ r->acc = (r->pos<r->len)? r->data[r->pos]:0; r->pos++; r->nbits=8; }
-    r->nbits--; return (r->acc>>r->nbits)&1;
-}
-
 /* ---------- 적응형 빈도 모델 ---------- */
 typedef struct { int nsym; uint32_t freq[257]; uint32_t total; } FM;
 static void fm_init(FM *m,int n){ m->nsym=n; m->total=(uint32_t)n; for(int i=0;i<n;i++) m->freq[i]=1; }
@@ -70,46 +52,38 @@ static void fm_update(FM *m,int sym){
         for(int i=0;i<m->nsym;i++){ m->freq[i]=(m->freq[i]+1)>>1; m->total+=m->freq[i]; } }
 }
 
-/* ---------- 산술 부호화기 ---------- */
-typedef struct { uint64_t low,high,pending; BW *bw; } AE;
-static void ae_emit(AE *e,int bit){
-    bw_bit(e->bw,bit);
-    while(e->pending>0){ bw_bit(e->bw,bit^1); e->pending--; }
-}
-static void ae_encode(AE *e,FM *m,int sym){
-    uint32_t clo,chi; fm_cum(m,sym,&clo,&chi); uint64_t total=m->total;
-    uint64_t rng=e->high-e->low+1;
-    e->high=e->low+(rng*chi)/total-1;
-    e->low =e->low+(rng*clo)/total;
-    for(;;){
-        if(e->high<HALF) ae_emit(e,0);
-        else if(e->low>=HALF){ ae_emit(e,1); e->low-=HALF; e->high-=HALF; }
-        else if(e->low>=QUARTER && e->high<THREE_Q){ e->pending++; e->low-=QUARTER; e->high-=QUARTER; }
-        else break;
-        e->low=(e->low<<1)&MASKV; e->high=((e->high<<1)|1)&MASKV;
+/* ---------- range coder (바이트 단위, carryless / Subbotin) ---------- */
+typedef struct { Buf *out; uint32_t low, rng; } RC;
+static void rc_init(RC *e,Buf *out){ e->out=out; e->low=0; e->rng=0xFFFFFFFFu; }
+static void rc_encode(RC *e,FM *m,int sym){
+    uint32_t clo,chi; fm_cum(m,sym,&clo,&chi);
+    uint32_t r=e->rng/m->total;
+    e->low += clo*r;
+    e->rng  = r*(chi-clo);
+    while( (e->low ^ (e->low+e->rng)) < TOP || (e->rng<BOT && ((e->rng = -e->low & (BOT-1)),1)) ){
+        buf_push(e->out, (uint8_t)(e->low>>24)); e->low<<=8; e->rng<<=8;
     }
     fm_update(m,sym);
 }
-static void ae_finish(AE *e){ e->pending++; ae_emit(e, e->low<QUARTER?0:1); }
-
-typedef struct { uint64_t low,high,code; BR *br; } AD;
-static void ad_init(AD *d,BR *br){
-    d->low=0; d->high=MASKV; d->br=br; d->code=0;
-    for(int i=0;i<PREC;i++) d->code=(d->code<<1)|br_bit(br);
+static void rc_finish(RC *e){
+    for(int i=0;i<4;i++){ buf_push(e->out,(uint8_t)(e->low>>24)); e->low<<=8; }
 }
-static int ad_decode(AD *d,FM *m){
-    uint64_t rng=d->high-d->low+1, total=m->total;
-    uint64_t value=((d->code-d->low+1)*total-1)/rng;
-    uint32_t clo,chi; int sym=fm_find(m,(uint32_t)value,&clo,&chi);
-    d->high=d->low+(rng*chi)/total-1;
-    d->low =d->low+(rng*clo)/total;
-    for(;;){
-        if(d->high<HALF){}
-        else if(d->low>=HALF){ d->low-=HALF; d->high-=HALF; d->code-=HALF; }
-        else if(d->low>=QUARTER && d->high<THREE_Q){ d->low-=QUARTER; d->high-=QUARTER; d->code-=QUARTER; }
-        else break;
-        d->low=(d->low<<1)&MASKV; d->high=((d->high<<1)|1)&MASKV;
-        d->code=((d->code<<1)|br_bit(d->br))&MASKV;
+
+typedef struct { const uint8_t *data; size_t len,pos; uint32_t low,rng,code; } RD;
+static uint8_t rd_byte(RD *d){ uint8_t b = d->pos<d->len? d->data[d->pos]:0; d->pos++; return b; }
+static void rd_init(RD *d,const uint8_t *p,size_t len){
+    d->data=p; d->len=len; d->pos=0; d->low=0; d->rng=0xFFFFFFFFu; d->code=0;
+    for(int i=0;i<4;i++) d->code=(d->code<<8)|rd_byte(d);
+}
+static int rd_decode(RD *d,FM *m){
+    uint32_t r=d->rng/m->total;
+    uint32_t value=(d->code-d->low)/r;
+    if(value>=m->total) value=m->total-1;
+    uint32_t clo,chi; int sym=fm_find(m,value,&clo,&chi);
+    d->low += clo*r;
+    d->rng  = r*(chi-clo);
+    while( (d->low ^ (d->low+d->rng)) < TOP || (d->rng<BOT && ((d->rng = -d->low & (BOT-1)),1)) ){
+        d->code=(d->code<<8)|rd_byte(d); d->low<<=8; d->rng<<=8;
     }
     fm_update(m,sym);
     return sym;
@@ -137,20 +111,19 @@ static int find_match(const uint8_t *d,int n,int pos,int *head,int *prev,int *ou
 
 /* ---------- 한 블록 압축 (LZ77 lazy matching + AC) ---------- */
 static void compress_block(const uint8_t *d,int n,Buf *out){
-    BW bw={out,0,0};
     FM flag,len,dh,dm,dl;
     FM *lit_ctx=malloc(256*sizeof(FM));               /* order-1: 문맥(앞 글자)별 리터럴 모델 */
     fm_init(&flag,3); fm_init(&len,256); fm_init(&dh,256); fm_init(&dm,256); fm_init(&dl,256);
     for(int k=0;k<256;k++) fm_init(&lit_ctx[k],256);
-    AE e={0,MASKV,0,&bw};
+    RC e; rc_init(&e,out);
     int *head=malloc(HSIZE*sizeof(int)); for(int x=0;x<HSIZE;x++) head[x]=-1;
     int *prev=malloc((n>0?n:1)*sizeof(int));
     int pb=0;                                          /* 직전 출력 바이트(문맥) */
 
     #define INSERT(p) do{ if((p)+MIN_MATCH<=n){ uint32_t _h=hash3(d+(p)); prev[(p)]=head[_h]; head[_h]=(p); } }while(0)
-    #define EMIT_LIT(B) do{ ae_encode(&e,&flag,0); ae_encode(&e,&lit_ctx[pb],(B)); pb=(B); }while(0)
-    #define EMIT_MATCH(L,D,LASTPOS) do{ ae_encode(&e,&flag,1); ae_encode(&e,&len,(L)-MIN_MATCH); \
-        int _dd=(D)-1; ae_encode(&e,&dh,(_dd>>16)&0xFF); ae_encode(&e,&dm,(_dd>>8)&0xFF); ae_encode(&e,&dl,_dd&0xFF); \
+    #define EMIT_LIT(B) do{ rc_encode(&e,&flag,0); rc_encode(&e,&lit_ctx[pb],(B)); pb=(B); }while(0)
+    #define EMIT_MATCH(L,D,LASTPOS) do{ rc_encode(&e,&flag,1); rc_encode(&e,&len,(L)-MIN_MATCH); \
+        int _dd=(D)-1; rc_encode(&e,&dh,(_dd>>16)&0xFF); rc_encode(&e,&dm,(_dd>>8)&0xFF); rc_encode(&e,&dl,_dd&0xFF); \
         pb=d[(LASTPOS)]; }while(0)
 
     int i=0, have_prev=0, prev_len=0, prev_dist=0, prev_pos=0;
@@ -173,8 +146,8 @@ static void compress_block(const uint8_t *d,int n,Buf *out){
         }
     }
     if(have_prev) EMIT_MATCH(prev_len,prev_dist,prev_pos+prev_len-1);
-    ae_encode(&e,&flag,2);
-    ae_finish(&e); bw_finish(&bw);
+    rc_encode(&e,&flag,2);
+    rc_finish(&e);
     #undef INSERT
     #undef EMIT_LIT
     #undef EMIT_MATCH
@@ -183,22 +156,21 @@ static void compress_block(const uint8_t *d,int n,Buf *out){
 
 /* ---------- 한 블록 해제 ---------- */
 static void decompress_block(const uint8_t *p,int plen,Buf *out){
-    BR br={p,(size_t)plen,0,0,0};
     FM flag,len,dh,dm,dl;
     FM *lit_ctx=malloc(256*sizeof(FM));
     fm_init(&flag,3); fm_init(&len,256); fm_init(&dh,256); fm_init(&dm,256); fm_init(&dl,256);
     for(int k=0;k<256;k++) fm_init(&lit_ctx[k],256);
-    AD d; ad_init(&d,&br);
+    RD d; rd_init(&d,p,(size_t)plen);
     int pb=0;
     for(;;){
-        int f=ad_decode(&d,&flag);
+        int f=rd_decode(&d,&flag);
         if(f==2) break;
         if(f==0){
-            int b=ad_decode(&d,&lit_ctx[pb]); buf_push(out,(uint8_t)b); pb=b;
+            int b=rd_decode(&d,&lit_ctx[pb]); buf_push(out,(uint8_t)b); pb=b;
         }
         else{
-            int l=ad_decode(&d,&len)+MIN_MATCH;
-            int dd=(ad_decode(&d,&dh)<<16)|(ad_decode(&d,&dm)<<8)|ad_decode(&d,&dl);
+            int l=rd_decode(&d,&len)+MIN_MATCH;
+            int dd=(rd_decode(&d,&dh)<<16)|(rd_decode(&d,&dm)<<8)|rd_decode(&d,&dl);
             size_t start=out->len-(size_t)(dd+1);
             for(int k=0;k<l;k++){ uint8_t v=out->buf[start+k]; buf_push(out,v); }
             pb=out->buf[out->len-1];

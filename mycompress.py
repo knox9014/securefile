@@ -25,29 +25,9 @@ MAX_MATCH = 258           # 길이 3..258 -> 0..255 (1바이트)
 CHAIN_CAP = 128           # 해시 체인 길이 제한(속도 vs 매칭품질)
 
 
-# ===== 비트 입출력 =====
-class BitWriter:
-    def __init__(self):
-        self.out = bytearray(); self.acc = 0; self.nbits = 0
-    def write_bit(self, bit):
-        self.acc = (self.acc << 1) | (bit & 1); self.nbits += 1
-        if self.nbits == 8:
-            self.out.append(self.acc); self.acc = 0; self.nbits = 0
-    def finish(self):
-        if self.nbits:
-            self.acc <<= (8 - self.nbits); self.out.append(self.acc)
-        return bytes(self.out)
-
-
-class BitReader:
-    def __init__(self, data):
-        self.data = data; self.pos = 0; self.acc = 0; self.nbits = 0
-    def read_bit(self):
-        if self.nbits == 0:
-            self.acc = self.data[self.pos] if self.pos < len(self.data) else 0
-            self.pos += 1; self.nbits = 8
-        self.nbits -= 1
-        return (self.acc >> self.nbits) & 1
+# range coder 상수 (바이트 단위 처리 → 비트 단위보다 빠름)
+TOP = 1 << 24
+BOT = 1 << 16
 
 
 # ===== 적응형 빈도 모델 =====
@@ -76,55 +56,62 @@ class FreqModel:
                 self.total += self.freq[i]
 
 
-# ===== 산술 부호화기 =====
+# ===== range coder (바이트 단위, carryless) =====
 class ArithmeticEncoder:
     def __init__(self):
-        self.low = 0; self.high = MASK; self.pending = 0; self.bw = BitWriter()
-    def _emit(self, bit):
-        self.bw.write_bit(bit)
-        while self.pending > 0:
-            self.bw.write_bit(bit ^ 1); self.pending -= 1
+        self.low = 0; self.rng = MASK; self.out = bytearray()
     def encode(self, model, sym):
         c_lo, c_hi = model.cum(sym); total = model.total
-        rng = self.high - self.low + 1
-        self.high = self.low + (rng * c_hi) // total - 1
-        self.low = self.low + (rng * c_lo) // total
+        r = self.rng // total
+        self.low = (self.low + c_lo * r) & MASK
+        self.rng = r * (c_hi - c_lo)
         while True:
-            if self.high < HALF: self._emit(0)
-            elif self.low >= HALF: self._emit(1); self.low -= HALF; self.high -= HALF
-            elif self.low >= QUARTER and self.high < THREE_Q:
-                self.pending += 1; self.low -= QUARTER; self.high -= QUARTER
-            else: break
-            self.low = (self.low << 1) & MASK
-            self.high = ((self.high << 1) | 1) & MASK
+            if (self.low ^ ((self.low + self.rng) & MASK)) < TOP:
+                pass
+            elif self.rng < BOT:
+                self.rng = (-self.low) & (BOT - 1)
+            else:
+                break
+            self.out.append((self.low >> 24) & 0xFF)
+            self.low = (self.low << 8) & MASK
+            self.rng = (self.rng << 8) & MASK
         model.update(sym)
     def finish(self):
-        self.pending += 1
-        self._emit(0 if self.low < QUARTER else 1)
-        return self.bw.finish()
+        for _ in range(4):
+            self.out.append((self.low >> 24) & 0xFF)
+            self.low = (self.low << 8) & MASK
+        return bytes(self.out)
 
 
 class ArithmeticDecoder:
     def __init__(self, blob):
-        self.low = 0; self.high = MASK; self.br = BitReader(blob); self.code = 0
-        for _ in range(PREC):
-            self.code = (self.code << 1) | self.br.read_bit()
+        self.data = blob; self.pos = 0
+        self.low = 0; self.rng = MASK; self.code = 0
+        for _ in range(4):
+            self.code = ((self.code << 8) | self._byte()) & MASK
+    def _byte(self):
+        b = self.data[self.pos] if self.pos < len(self.data) else 0
+        self.pos += 1
+        return b
     def decode(self, model):
-        rng = self.high - self.low + 1; total = model.total
-        value = ((self.code - self.low + 1) * total - 1) // rng
+        total = model.total
+        r = self.rng // total
+        value = ((self.code - self.low) & MASK) // r
+        if value >= total:
+            value = total - 1
         sym, c_lo, c_hi = model.find(value)
-        self.high = self.low + (rng * c_hi) // total - 1
-        self.low = self.low + (rng * c_lo) // total
+        self.low = (self.low + c_lo * r) & MASK
+        self.rng = r * (c_hi - c_lo)
         while True:
-            if self.high < HALF: pass
-            elif self.low >= HALF:
-                self.low -= HALF; self.high -= HALF; self.code -= HALF
-            elif self.low >= QUARTER and self.high < THREE_Q:
-                self.low -= QUARTER; self.high -= QUARTER; self.code -= QUARTER
-            else: break
-            self.low = (self.low << 1) & MASK
-            self.high = ((self.high << 1) | 1) & MASK
-            self.code = ((self.code << 1) | self.br.read_bit()) & MASK
+            if (self.low ^ ((self.low + self.rng) & MASK)) < TOP:
+                pass
+            elif self.rng < BOT:
+                self.rng = (-self.low) & (BOT - 1)
+            else:
+                break
+            self.code = ((self.code << 8) | self._byte()) & MASK
+            self.low = (self.low << 8) & MASK
+            self.rng = (self.rng << 8) & MASK
         model.update(sym)
         return sym
 
