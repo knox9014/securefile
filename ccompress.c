@@ -119,49 +119,59 @@ static uint32_t hash3(const uint8_t *p){
     return (((uint32_t)p[0]*65599u + p[1])*65599u + p[2]) & (HSIZE-1);
 }
 
-/* ---------- 한 블록 압축 (LZ77 + AC) ---------- */
+/* 위치 pos에서 최선의 매치를 찾아 길이를 반환, 거리는 *outdist */
+static int find_match(const uint8_t *d,int n,int pos,int *head,int *prev,int *outdist){
+    int best_len=0,best_dist=0;
+    if(pos+MIN_MATCH<=n){
+        uint32_t h=hash3(d+pos); int j=head[h], chain=0;
+        int maxl=n-pos; if(maxl>MAX_MATCH) maxl=MAX_MATCH;
+        while(j>=0 && chain<CHAIN_CAP){
+            if(pos-j>WINDOW) break;
+            int l=0; while(l<maxl && d[j+l]==d[pos+l]) l++;
+            if(l>best_len){ best_len=l; best_dist=pos-j; if(l>=maxl) break; }
+            j=prev[j]; chain++;
+        }
+    }
+    *outdist=best_dist; return best_len;
+}
+
+/* ---------- 한 블록 압축 (LZ77 lazy matching + AC) ---------- */
 static void compress_block(const uint8_t *d,int n,Buf *out){
     BW bw={out,0,0};
     FM flag,lit,len,dh,dm,dl;
     fm_init(&flag,3); fm_init(&lit,256); fm_init(&len,256); fm_init(&dh,256); fm_init(&dm,256); fm_init(&dl,256);
     AE e={0,MASKV,0,&bw};
-    int *head=malloc(HSIZE*sizeof(int)); for(int i=0;i<HSIZE;i++) head[i]=-1;
+    int *head=malloc(HSIZE*sizeof(int)); for(int x=0;x<HSIZE;x++) head[x]=-1;
     int *prev=malloc((n>0?n:1)*sizeof(int));
-    int i=0;
+
+    #define INSERT(p) do{ if((p)+MIN_MATCH<=n){ uint32_t _h=hash3(d+(p)); prev[(p)]=head[_h]; head[_h]=(p); } }while(0)
+    #define EMIT_MATCH(L,D) do{ ae_encode(&e,&flag,1); ae_encode(&e,&len,(L)-MIN_MATCH); \
+        int _dd=(D)-1; ae_encode(&e,&dh,(_dd>>16)&0xFF); ae_encode(&e,&dm,(_dd>>8)&0xFF); ae_encode(&e,&dl,_dd&0xFF); }while(0)
+
+    int i=0, have_prev=0, prev_len=0, prev_dist=0, prev_pos=0;
     while(i<n){
-        int best_len=0,best_dist=0;
-        if(i+MIN_MATCH<=n){
-            uint32_t h=hash3(d+i); int j=head[h], chain=0;
-            int maxl=n-i; if(maxl>MAX_MATCH) maxl=MAX_MATCH;
-            while(j>=0 && chain<CHAIN_CAP){
-                if(i-j>WINDOW) break;
-                int l=0; while(l<maxl && d[j+l]==d[i+l]) l++;
-                if(l>best_len){ best_len=l; best_dist=i-j; if(l>=maxl) break; }
-                j=prev[j]; chain++;
+        int cur_dist, cur_len=find_match(d,n,i,head,prev,&cur_dist);
+        INSERT(i);                       /* 자기 자신 매칭 방지 위해 탐색 후 삽입 */
+        if(have_prev){
+            if(cur_len>prev_len){        /* i+1이 더 김 -> 이전 시작 바이트는 리터럴 */
+                ae_encode(&e,&flag,0); ae_encode(&e,&lit,d[prev_pos]);
+                prev_len=cur_len; prev_dist=cur_dist; prev_pos=i; i++;
+            } else {                     /* 이전 매치 확정 */
+                EMIT_MATCH(prev_len,prev_dist);
+                int end=prev_pos+prev_len;
+                for(int p=i+1;p<end;p++) INSERT(p);
+                i=end; have_prev=0;
             }
-        }
-        int advance;
-        if(best_len>=MIN_MATCH){
-            ae_encode(&e,&flag,1);
-            ae_encode(&e,&len,best_len-MIN_MATCH);
-            int dd=best_dist-1;                  /* 거리 = 3바이트(24비트) */
-            ae_encode(&e,&dh,(dd>>16)&0xFF);
-            ae_encode(&e,&dm,(dd>>8)&0xFF);
-            ae_encode(&e,&dl,dd&0xFF);
-            advance=best_len;
         } else {
-            ae_encode(&e,&flag,0);
-            ae_encode(&e,&lit,d[i]);
-            advance=1;
-        }
-        int end=i+advance;
-        while(i<end){
-            if(i+MIN_MATCH<=n){ uint32_t h=hash3(d+i); prev[i]=head[h]; head[h]=i; }
-            i++;
+            if(cur_len>=MIN_MATCH){ have_prev=1; prev_len=cur_len; prev_dist=cur_dist; prev_pos=i; i++; }
+            else { ae_encode(&e,&flag,0); ae_encode(&e,&lit,d[i]); i++; }
         }
     }
+    if(have_prev) EMIT_MATCH(prev_len,prev_dist);
     ae_encode(&e,&flag,2);
     ae_finish(&e); bw_finish(&bw);
+    #undef INSERT
+    #undef EMIT_MATCH
     free(head); free(prev);
 }
 

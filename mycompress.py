@@ -129,40 +129,65 @@ class ArithmeticDecoder:
         return sym
 
 
-# ===== LZ77 파싱 =====
+# ===== LZ77 파싱 (lazy matching) =====
 def lz77_parse(data: bytes):
-    n = len(data); i = 0; tokens = []
+    n = len(data); tokens = []
     head = {}   # 3바이트 키 -> 최근 위치 리스트
-    while i < n:
+
+    def insert(pos):
+        if pos + 3 <= n:
+            k = data[pos:pos+3]
+            lst = head.get(k)
+            if lst is None:
+                head[k] = [pos]
+            else:
+                lst.insert(0, pos)
+                if len(lst) > CHAIN_CAP: lst.pop()
+
+    def find(pos):
         best_len = 0; best_dist = 0
-        if i + MIN_MATCH <= n:
-            key = data[i:i+3]
-            chain = head.get(key)
+        if pos + MIN_MATCH <= n:
+            chain = head.get(data[pos:pos+3])
             if chain:
-                maxl = min(MAX_MATCH, n - i)
+                maxl = min(MAX_MATCH, n - pos)
                 for j in chain:
-                    if i - j > WINDOW: break
+                    if pos - j > WINDOW: break
                     l = 0
-                    while l < maxl and data[j+l] == data[i+l]:
+                    while l < maxl and data[j+l] == data[pos+l]:
                         l += 1
                     if l > best_len:
-                        best_len = l; best_dist = i - j
+                        best_len = l; best_dist = pos - j
                         if l >= maxl: break
-        if best_len >= MIN_MATCH:
-            tokens.append((1, best_len, best_dist)); advance = best_len
+        return best_len, best_dist
+
+    i = 0
+    have_prev = False; prev_len = 0; prev_dist = 0; prev_pos = 0
+    while i < n:
+        cur_len, cur_dist = find(i)
+        insert(i)   # 자기 자신과 매칭되지 않도록 탐색 후 삽입
+        if have_prev:
+            if cur_len > prev_len:
+                # i+1이 더 길다 -> 이전 매치 시작 바이트를 리터럴로 흘리고 현재를 보류
+                tokens.append((0, data[prev_pos]))
+                prev_len, prev_dist, prev_pos = cur_len, cur_dist, i
+                i += 1
+            else:
+                # 이전 매치가 충분히 좋다 -> 확정
+                tokens.append((1, prev_len, prev_dist))
+                end = prev_pos + prev_len
+                p = i + 1
+                while p < end:
+                    insert(p); p += 1
+                i = end
+                have_prev = False
         else:
-            tokens.append((0, data[i])); advance = 1
-        end = i + advance
-        while i < end:
-            if i + 3 <= n:
-                k = data[i:i+3]
-                lst = head.get(k)
-                if lst is None:
-                    head[k] = [i]
-                else:
-                    lst.insert(0, i)
-                    if len(lst) > CHAIN_CAP: lst.pop()
-            i += 1
+            if cur_len >= MIN_MATCH:
+                have_prev = True; prev_len, prev_dist, prev_pos = cur_len, cur_dist, i
+                i += 1
+            else:
+                tokens.append((0, data[i])); i += 1
+    if have_prev:   # 마지막에 보류된 매치 처리
+        tokens.append((1, prev_len, prev_dist))
     return tokens
 
 
