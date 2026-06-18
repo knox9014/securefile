@@ -11,15 +11,21 @@ autopack.py - 파일별 최적 압축 방식 자동 선택기
   3 LZMA   - 일반적으로 압축률 최고
   4 OURS   - 우리가 직접 만든 압축기 (LZ77+산술부호화+order-1)
 
-포맷: [MAGIC "APK1"][method 1B][payload...]
+포맷(단일): [MAGIC "APK1"][method 1B][payload...]
+아카이브(.spk): 폴더 안 파일마다 '개별 최적 방식'으로 압축해 하나로 묶음
+  → 섞인 폴더에서 '다 묶어 단일 방식'보다 효율적
+
 사용법:
-  python autopack.py c <입력> <출력>
-  python autopack.py d <입력> <출력>
+  python autopack.py c <입력파일> <출력>        # 단일 파일 압축
+  python autopack.py d <입력> <출력파일>        # 단일 파일 해제
+  python autopack.py pack <폴더> <출력.spk>     # 폴더 → 파일별 최적 압축 아카이브
+  python autopack.py unpack <입력.spk> <폴더>   # 아카이브 복원
 """
 
 import sys
 import os
 import math
+import struct
 import zlib
 import bz2
 import lzma
@@ -148,7 +154,77 @@ def decompress(blob: bytes) -> bytes:
     raise ValueError(f"알 수 없는 방식 id: {method}")
 
 
+# ===== 아카이브: 파일마다 개별 최적 방식으로 압축해 하나로 묶기 =====
+#   [MAGIC "SPK1"][count 4B] + 각 항목: [name_len 2B][name][blob_len 8B][apk_blob]
+ARCHIVE_MAGIC = b"SPK1"
+
+
+def pack_folder(root: str):
+    """폴더 안 모든 파일을 '각자 최적 방식'으로 압축해 아카이브 바이트로 묶는다.
+    (아카이브 바이트, [(상대경로, 방식, 원본크기, 압축크기), ...]) 반환."""
+    root = root.rstrip("/\\")
+    entries = []
+    report = []
+    for dirpath, _, files in os.walk(root):
+        for fn in sorted(files):
+            full = os.path.join(dirpath, fn)
+            rel = os.path.relpath(full, root).replace("\\", "/")
+            data = open(full, "rb").read()
+            blob, mid = compress(data)               # 파일마다 개별 최적 선택
+            entries.append((rel, blob))
+            report.append((rel, NAMES[mid], len(data), len(blob)))
+
+    out = bytearray(ARCHIVE_MAGIC)
+    out += struct.pack(">I", len(entries))
+    for rel, blob in entries:
+        nb = rel.encode("utf-8")
+        out += struct.pack(">H", len(nb)) + nb
+        out += struct.pack(">Q", len(blob)) + blob
+    return bytes(out), report
+
+
+def unpack_archive(blob: bytes, outdir: str):
+    """아카이브를 풀어 outdir 아래에 원래 구조로 복원."""
+    if blob[:4] != ARCHIVE_MAGIC:
+        raise ValueError("올바른 .spk 아카이브가 아닙니다.")
+    pos = 4
+    (count,) = struct.unpack(">I", blob[pos:pos+4]); pos += 4
+    names = []
+    for _ in range(count):
+        (nl,) = struct.unpack(">H", blob[pos:pos+2]); pos += 2
+        name = blob[pos:pos+nl].decode("utf-8"); pos += nl
+        (bl,) = struct.unpack(">Q", blob[pos:pos+8]); pos += 8
+        entry = blob[pos:pos+bl]; pos += bl
+        data = decompress(entry)
+        dest = os.path.join(outdir, name)
+        os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+        with open(dest, "wb") as f:
+            f.write(data)
+        names.append(name)
+    return names
+
+
 def main():
+    if len(sys.argv) >= 2 and sys.argv[1] in ("pack", "unpack"):
+        if len(sys.argv) != 4:
+            print("python autopack.py pack <폴더> <출력.spk>")
+            print("python autopack.py unpack <입력.spk> <출력폴더>")
+            sys.exit(1)
+        if sys.argv[1] == "pack":
+            blob, report = pack_folder(sys.argv[2])
+            open(sys.argv[3], "wb").write(blob)
+            print(f"{'파일':<40}{'방식':>8}{'압축률':>9}")
+            for rel, name, osz, csz in report:
+                r = csz / osz * 100 if osz else 0
+                print(f"{rel[:40]:<40}{name:>8}{r:>8.1f}%")
+            tot_o = sum(r[2] for r in report); tot_c = len(blob)
+            print(f"\n총 {len(report)}개 파일  {tot_o:,} → {tot_c:,} bytes "
+                  f"({tot_c/tot_o*100:.1f}%)  → {sys.argv[3]}")
+        else:
+            names = unpack_archive(open(sys.argv[2], "rb").read(), sys.argv[3])
+            print(f"{len(names)}개 파일 복원 완료 → {sys.argv[3]}")
+        return
+
     if len(sys.argv) != 4 or sys.argv[1] not in ("c", "d"):
         print(__doc__)
         sys.exit(1)
