@@ -1,0 +1,10 @@
+# 빌드 산출물
+__pycache__/
+*.pyc
+*.obj
+*.exe
+# 임시
+_in.bin
+_out.bin
+*.sfz
+*.sfw
