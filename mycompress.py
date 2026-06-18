@@ -19,10 +19,10 @@ MASK = WHOLE - 1
 MAX_TOTAL = 1 << 16
 
 # ---- LZ77 파라미터 ----
-WINDOW = 1 << 16          # 최대 거리 65536 (거리=2바이트로 표현)
+WINDOW = 1 << 20          # 최대 거리 1MB (거리=3바이트로 표현) -> 장거리 반복 포착
 MIN_MATCH = 3
 MAX_MATCH = 258           # 길이 3..258 -> 0..255 (1바이트)
-CHAIN_CAP = 64            # 해시 체인 길이 제한(속도)
+CHAIN_CAP = 128           # 해시 체인 길이 제한(속도 vs 매칭품질)
 
 
 # ===== 비트 입출력 =====
@@ -172,6 +172,7 @@ def _compress_block(data: bytes) -> bytes:
     lit = FreqModel(256)
     length = FreqModel(256)  # (길이-3)
     dist_hi = FreqModel(256)
+    dist_mid = FreqModel(256)
     dist_lo = FreqModel(256)
     enc = ArithmeticEncoder()
     for tok in lz77_parse(data):
@@ -181,8 +182,9 @@ def _compress_block(data: bytes) -> bytes:
             _, l, d = tok
             enc.encode(flag, 1)
             enc.encode(length, l - MIN_MATCH)
-            dd = d - 1
-            enc.encode(dist_hi, (dd >> 8) & 0xFF)
+            dd = d - 1                       # 거리 = 3바이트(24비트)
+            enc.encode(dist_hi, (dd >> 16) & 0xFF)
+            enc.encode(dist_mid, (dd >> 8) & 0xFF)
             enc.encode(dist_lo, dd & 0xFF)
     enc.encode(flag, 2)      # 끝 표시
     return enc.finish()
@@ -190,7 +192,7 @@ def _compress_block(data: bytes) -> bytes:
 
 def _decompress_block(blob: bytes) -> bytes:
     flag = FreqModel(3); lit = FreqModel(256); length = FreqModel(256)
-    dist_hi = FreqModel(256); dist_lo = FreqModel(256)
+    dist_hi = FreqModel(256); dist_mid = FreqModel(256); dist_lo = FreqModel(256)
     dec = ArithmeticDecoder(blob)
     out = bytearray()
     while True:
@@ -200,7 +202,7 @@ def _decompress_block(blob: bytes) -> bytes:
             out.append(dec.decode(lit))
         else:
             l = dec.decode(length) + MIN_MATCH
-            dd = (dec.decode(dist_hi) << 8) | dec.decode(dist_lo)
+            dd = (dec.decode(dist_hi) << 16) | (dec.decode(dist_mid) << 8) | dec.decode(dist_lo)
             start = len(out) - (dd + 1)
             for k in range(l):           # 겹치는 복사도 바이트 단위로 안전
                 out.append(out[start + k])
@@ -209,7 +211,7 @@ def _decompress_block(blob: bytes) -> bytes:
 
 # ===== 공개 API: 블록 단위로 '압축 vs 원본' 중 작은 쪽 선택 =====
 #   무작위/이미 압축된 블록은 그냥 원본으로 저장(store) -> 데이터가 커지는 것을 방지
-BLOCK = 1 << 15          # 32KB 블록
+BLOCK = 1 << 20          # 1MB 블록 (장거리 반복 포착 + store 단위)
 MODE_STORE = 0
 MODE_COMPRESSED = 1
 

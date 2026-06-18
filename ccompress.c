@@ -18,11 +18,11 @@
 #define MASKV     0xFFFFFFFFULL
 #define MAX_TOTAL (1<<16)
 
-#define WINDOW    65536
+#define WINDOW    (1<<20)
 #define MIN_MATCH 3
 #define MAX_MATCH 258
-#define CHAIN_CAP 64
-#define BLOCK     (1<<15)
+#define CHAIN_CAP 128
+#define BLOCK     (1<<20)
 #define HSIZE     (1<<16)
 
 /* ---------- 가변 버퍼 ---------- */
@@ -122,8 +122,8 @@ static uint32_t hash3(const uint8_t *p){
 /* ---------- 한 블록 압축 (LZ77 + AC) ---------- */
 static void compress_block(const uint8_t *d,int n,Buf *out){
     BW bw={out,0,0};
-    FM flag,lit,len,dh,dl;
-    fm_init(&flag,3); fm_init(&lit,256); fm_init(&len,256); fm_init(&dh,256); fm_init(&dl,256);
+    FM flag,lit,len,dh,dm,dl;
+    fm_init(&flag,3); fm_init(&lit,256); fm_init(&len,256); fm_init(&dh,256); fm_init(&dm,256); fm_init(&dl,256);
     AE e={0,MASKV,0,&bw};
     int *head=malloc(HSIZE*sizeof(int)); for(int i=0;i<HSIZE;i++) head[i]=-1;
     int *prev=malloc((n>0?n:1)*sizeof(int));
@@ -144,8 +144,9 @@ static void compress_block(const uint8_t *d,int n,Buf *out){
         if(best_len>=MIN_MATCH){
             ae_encode(&e,&flag,1);
             ae_encode(&e,&len,best_len-MIN_MATCH);
-            int dd=best_dist-1;
-            ae_encode(&e,&dh,(dd>>8)&0xFF);
+            int dd=best_dist-1;                  /* 거리 = 3바이트(24비트) */
+            ae_encode(&e,&dh,(dd>>16)&0xFF);
+            ae_encode(&e,&dm,(dd>>8)&0xFF);
             ae_encode(&e,&dl,dd&0xFF);
             advance=best_len;
         } else {
@@ -167,8 +168,8 @@ static void compress_block(const uint8_t *d,int n,Buf *out){
 /* ---------- 한 블록 해제 ---------- */
 static void decompress_block(const uint8_t *p,int plen,Buf *out){
     BR br={p,(size_t)plen,0,0,0};
-    FM flag,lit,len,dh,dl;
-    fm_init(&flag,3); fm_init(&lit,256); fm_init(&len,256); fm_init(&dh,256); fm_init(&dl,256);
+    FM flag,lit,len,dh,dm,dl;
+    fm_init(&flag,3); fm_init(&lit,256); fm_init(&len,256); fm_init(&dh,256); fm_init(&dm,256); fm_init(&dl,256);
     AD d; ad_init(&d,&br);
     for(;;){
         int f=ad_decode(&d,&flag);
@@ -176,7 +177,7 @@ static void decompress_block(const uint8_t *p,int plen,Buf *out){
         if(f==0){ buf_push(out,(uint8_t)ad_decode(&d,&lit)); }
         else{
             int l=ad_decode(&d,&len)+MIN_MATCH;
-            int dd=(ad_decode(&d,&dh)<<8)|ad_decode(&d,&dl);
+            int dd=(ad_decode(&d,&dh)<<16)|(ad_decode(&d,&dm)<<8)|ad_decode(&d,&dl);
             size_t start=out->len-(size_t)(dd+1);
             for(int k=0;k<l;k++){ uint8_t v=out->buf[start+k]; buf_push(out,v); }
         }
