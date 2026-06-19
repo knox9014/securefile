@@ -19,7 +19,7 @@ import autopack
 import securepack
 
 VERSION = "1.0.0"
-REPO = "knox9014/securefile"
+REPO = "knox9014/knox_secure_zip"
 
 HTML = r"""<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><title>KnoxSecureZip</title>
@@ -108,7 +108,7 @@ window.addEventListener("pywebviewready",async()=>{
    $("updBtn").onclick=async()=>{
     $("updBtn").disabled=true;$("updBtn").textContent="업데이트 중…";
     const r=await api().do_update(u.url);
-    if(!r.ok){$("updBtn").disabled=false;$("updBtn").textContent="다시 시도";setSt(r.error,"err");}
+    if(!r.ok){$("updBtn").disabled=false;$("updBtn").textContent="다시 시도";err(r.error);}
    };
   }
  }catch(e){}
