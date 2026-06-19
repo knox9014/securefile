@@ -11,3 +11,7 @@ _out.bin
 build/
 *.spec
 dist/
+_*.txt
+_*.bin
+_*.spk
+_*.spkx
