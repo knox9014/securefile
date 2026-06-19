@@ -300,16 +300,18 @@ class Api:
             with urllib.request.urlopen(req, timeout=120) as r, open(new_exe, "wb") as f:
                 f.write(r.read())
             bat = os.path.join(tempfile.gettempdir(), "ksz_update.bat")
-            pid = os.getpid()
+            # PID 폴링(콘솔 파이프) 대신 'move 재시도': 실행 중 exe는 잠겨 move 실패 →
+            # 앱이 종료되면 잠금 풀려 move 성공. 콘솔/파이프 불필요해 분리 프로세스에서 안정적.
             with open(bat, "w", encoding="utf-8") as f:
                 f.write(
                     "@echo off\r\n"
-                    ":wait\r\n"
-                    f'tasklist /fi "PID eq {pid}" | find "{pid}" >nul && (timeout /t 1 >nul & goto wait)\r\n'
-                    f'move /y "{new_exe}" "{exe}" >nul\r\n'
+                    ":retry\r\n"
+                    f'move /y "{new_exe}" "{exe}" >nul 2>nul\r\n'
+                    f'if exist "{new_exe}" (ping -n 2 127.0.0.1 >nul & goto retry)\r\n'
                     f'start "" "{exe}"\r\n'
                     'del "%~f0"\r\n')
-            subprocess.Popen(["cmd", "/c", bat], creationflags=0x08000000)  # DETACHED_PROCESS
+            subprocess.Popen(["cmd", "/c", bat], creationflags=0x00000008 | 0x00000200,
+                             close_fds=True)
             self._win().destroy()                       # 앱 종료 → 배치가 교체 후 재실행
             return {"ok": True}
         except Exception as e:
