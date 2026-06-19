@@ -58,7 +58,7 @@ td,th{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);color:
 <div class="field" id="pwf"><input type="password" id="pw" placeholder="비밀번호"></div>
 <div class="row"><button class="go" id="go">압축 + 암호화</button><button class="open" id="op">📂 열기 / 복원</button></div>
 <div class="status info" id="st"></div><div id="rep"></div>
-<div class="foot">엔진: 파일별 자동선택(zstd·bz2·lzma·brotli) · 암호화: AES-256-GCM<br>파일이 인터넷으로 전송되지 않습니다.<br><span style="color:#9fb0ff;">만든 사람: knox9014</span></div>
+<div class="foot">엔진: 파일별 자동선택(zstd·bz2·lzma·brotli) · 암호화: AES-256-GCM<br>파일이 인터넷으로 전송되지 않습니다.<br><span style="color:#9fb0ff;">만든 사람: knox9014 · MIT 라이선스</span></div>
 </div>
 <script>
 const $=id=>document.getElementById(id);let paths=[];

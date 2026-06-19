@@ -2,7 +2,7 @@
 
 파일/폴더를 **압축 + 암호화**하여 안전하게 보관하는 도구입니다.
 
-**만든 사람: [knox9014](https://github.com/knox9014)**
+**만든 사람: [knox9014](https://github.com/knox9014)** · 라이선스: **MIT** ([LICENSE](LICENSE), [제3자 고지](THIRD-PARTY-NOTICES.md))
 
 ## 구성
 - `index.html` — **브라우저 웹 앱 (설치 불필요, 가장 편함)** ⭐
