@@ -1,5 +1,5 @@
 """
-server.py - SecureFile 고급 로컬 서버
+server.py - KnoxSecureZip 고급 로컬 서버
 
 풀 엔진(securepack: 파일별 최적 압축 zstd/bz2/lzma/brotli + 속도 모드 + AES 암호화)을
 브라우저 UI로 제공한다. localhost에서만 돌기 때문에 파일이 기기 밖으로 나가지 않는다.
@@ -22,7 +22,7 @@ PORT = 8770
 
 PAGE = r"""<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SecureFile — 고급(로컬 풀 엔진)</title>
+<title>KnoxSecureZip — 고급(로컬 풀 엔진)</title>
 <style>
 :root{--bg:#0b0e1a;--card:#161b33;--line:#262d4d;--accent:#6c8cff;--ok:#37d39b;--err:#ff6b6b;--muted:#8a93b2;--txt:#eef1ff;}
 *{box-sizing:border-box;}body{margin:0;min-height:100vh;font-family:"Segoe UI",system-ui,sans-serif;color:var(--txt);
@@ -43,7 +43,7 @@ select,input[type=password]{width:100%;padding:11px 12px;border-radius:10px;bord
 table{width:100%;margin-top:12px;border-collapse:collapse;font-size:12px;}td,th{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);color:#cdd5ff;}
 th{color:var(--muted);}.foot{margin-top:14px;font-size:11px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px;line-height:1.6;}
 </style></head><body><div class="card">
-<h1>🔐 SecureFile <span class="tag" id="eng">로컬 풀 엔진</span></h1>
+<h1>🔐 KnoxSecureZip <span class="tag" id="eng">로컬 풀 엔진</span></h1>
 <div class="sub">파일별 최적 압축(zstd·bz2·lzma·brotli) + 선택적 암호화. 모든 처리는 내 컴퓨터(localhost)에서만.</div>
 <div class="drop" id="drop"><div class="big">📁</div><div>파일·폴더를 끌어다 놓거나 클릭</div>
 <div class="name" id="fname"></div>
@@ -173,7 +173,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     url = f"http://127.0.0.1:{PORT}"
-    print(f"SecureFile 고급 서버: {url}  (Ctrl+C로 종료)")
+    print(f"KnoxSecureZip 고급 서버: {url}  (Ctrl+C로 종료)")
     try:
         webbrowser.open(url)
     except Exception:

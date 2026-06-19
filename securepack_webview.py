@@ -1,5 +1,5 @@
 """
-securepack_webview.py - SecureFile 데스크탑 앱 (모던 UI)
+securepack_webview.py - KnoxSecureZip 데스크탑 앱 (모던 UI)
 
 웹사이트와 같은 디자인을 네이티브 창(pywebview)에 띄운다. 브라우저 없음.
 파일은 네이티브 대화상자로 디스크에서 직접 읽어 처리 → base64 없이 RAM 절약.
@@ -14,7 +14,7 @@ import autopack
 import securepack
 
 HTML = r"""<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>SecureFile</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>KnoxSecureZip</title>
 <style>
 :root{--bg:#0b0e1a;--bg2:#10142a;--card:#161b33;--line:#262d4d;--accent:#6c8cff;--ok:#37d39b;--err:#ff6b6b;--muted:#8a93b2;--txt:#eef1ff;}
 *{box-sizing:border-box;}html,body{margin:0;height:100%;}
@@ -45,7 +45,7 @@ td,th{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);color:
 .spin{display:inline-block;width:13px;height:13px;border:2px solid #45507f;border-top-color:var(--accent);border-radius:50%;animation:r .7s linear infinite;vertical-align:-2px;margin-right:6px;}
 @keyframes r{to{transform:rotate(360deg);}}
 </style></head><body><div class="card">
-<h1>🔐 SecureFile <span class="tag">데스크탑</span></h1>
+<h1>🔐 KnoxSecureZip <span class="tag">데스크탑</span></h1>
 <div class="sub">파일별 최적 압축 + 선택적 암호화 · 모든 처리는 내 컴퓨터에서만.</div>
 <div class="drop"><div class="big">📁</div><div class="t">아래 버튼으로 파일·폴더를 선택하세요</div>
 <div class="name" id="sel">선택된 항목 없음</div></div>
@@ -130,7 +130,7 @@ class Api:
         try:
             r = self._win().create_file_dialog(
                 webview.OPEN_DIALOG,
-                file_types=("SecureFile (*.spk;*.spkx)", "All files (*.*)"))
+                file_types=("KnoxSecureZip (*.spk;*.spkx)", "All files (*.*)"))
             if not r:
                 return {"ok": False, "error": "파일이 선택되지 않았습니다."}
             src = r[0]
@@ -149,7 +149,7 @@ class Api:
 
 
 def main():
-    webview.create_window("SecureFile", html=HTML, js_api=Api(),
+    webview.create_window("KnoxSecureZip", html=HTML, js_api=Api(),
                           width=540, height=680, background_color="#0b0e1a")
     webview.start()
 

@@ -1,4 +1,4 @@
-# 🔐 SecureFile
+# 🔐 KnoxSecureZip
 
 파일/폴더를 **압축 + 암호화**하여 안전하게 보관하는 도구입니다.
 

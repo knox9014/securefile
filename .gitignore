@@ -8,3 +8,6 @@ _in.bin
 _out.bin
 *.sfz
 *.sfw
+build/
+*.spec
+dist/

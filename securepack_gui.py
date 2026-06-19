@@ -1,5 +1,5 @@
 """
-securepack_gui.py - SecureFile 데스크탑 GUI (브라우저/서버 없음)
+securepack_gui.py - KnoxSecureZip 데스크탑 GUI (브라우저/서버 없음)
 
 디스크에서 파일을 직접 읽고 써서 base64 오버헤드 없이 RAM을 절약한다.
 풀 엔진(파일별 최적 압축 + 속도 모드 + AES 암호화)을 네이티브 창에서 사용.
@@ -20,11 +20,11 @@ class App:
     def __init__(self, root):
         self.root = root
         self.paths = []          # 선택된 파일/폴더 경로들
-        root.title("SecureFile — 압축 & 암호화")
+        root.title("KnoxSecureZip — 압축 & 암호화")
         root.geometry("480x420")
         root.resizable(False, False)
 
-        tk.Label(root, text="🔐 SecureFile", font=("Segoe UI", 16, "bold")).pack(pady=(16, 2))
+        tk.Label(root, text="🔐 KnoxSecureZip", font=("Segoe UI", 16, "bold")).pack(pady=(16, 2))
         tk.Label(root, text="파일별 최적 압축 + 선택적 암호화 · 모두 내 컴퓨터에서",
                  fg="#666").pack()
 
@@ -119,7 +119,7 @@ class App:
         return out
 
     def _do_unpack(self, pw):
-        src = filedialog.askopenfilename(filetypes=[("SecureFile", "*.spk *.spkx"), ("모든 파일", "*.*")])
+        src = filedialog.askopenfilename(filetypes=[("KnoxSecureZip", "*.spk *.spkx"), ("모든 파일", "*.*")])
         if not src:
             raise ValueError("파일이 선택되지 않았습니다.")
         blob = open(src, "rb").read()

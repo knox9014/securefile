@@ -1,5 +1,5 @@
 """
-securefile_gui.py - SecureFile 그래픽 인터페이스 (tkinter, 파이썬 기본 내장)
+securefile_gui.py - KnoxSecureZip 그래픽 인터페이스 (tkinter, 파이썬 기본 내장)
 
 실행:
     python securefile_gui.py
@@ -20,11 +20,11 @@ class App:
     def __init__(self, root):
         self.root = root
         self.selected = None
-        root.title("SecureFile - 파일 암호화/압축")
+        root.title("KnoxSecureZip - 파일 암호화/압축")
         root.geometry("460x300")
         root.resizable(False, False)
 
-        tk.Label(root, text="🔐 SecureFile", font=("Segoe UI", 16, "bold")).pack(pady=(16, 4))
+        tk.Label(root, text="🔐 KnoxSecureZip", font=("Segoe UI", 16, "bold")).pack(pady=(16, 4))
         tk.Label(root, text="파일 또는 폴더를 압축 + 암호화합니다", fg="#666").pack()
 
         # 선택 표시

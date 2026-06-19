@@ -168,43 +168,57 @@ def decompress(blob: bytes) -> bytes:
 ARCHIVE_MAGIC = b"SPK1"
 
 
-def pack_folder(root: str, mode: str = "max"):
-    """폴더 안 모든 파일을 '각자 최적 방식'으로 압축해 아카이브 바이트로 묶는다.
-    (아카이브 바이트, [(상대경로, 방식, 원본크기, 압축크기), ...]) 반환."""
-    root = root.rstrip("/\\")
+def pack_entries(items, mode: str = "max"):
+    """메모리상의 [(이름, 바이트), ...]를 파일별 최적 압축해 아카이브 바이트로 묶는다.
+    (아카이브 바이트, [(이름, 방식, 원본크기, 압축크기), ...]) 반환."""
     entries = []
     report = []
-    for dirpath, _, files in os.walk(root):
-        for fn in sorted(files):
-            full = os.path.join(dirpath, fn)
-            rel = os.path.relpath(full, root).replace("\\", "/")
-            data = open(full, "rb").read()
-            blob, mid = compress(data, mode)         # 파일마다 개별 최적 선택
-            entries.append((rel, blob))
-            report.append((rel, NAMES[mid], len(data), len(blob)))
+    for name, data in items:
+        blob, mid = compress(data, mode)             # 파일마다 개별 최적 선택
+        entries.append((name, blob))
+        report.append((name, NAMES[mid], len(data), len(blob)))
 
     out = bytearray(ARCHIVE_MAGIC)
     out += struct.pack(">I", len(entries))
-    for rel, blob in entries:
-        nb = rel.encode("utf-8")
+    for name, blob in entries:
+        nb = name.encode("utf-8")
         out += struct.pack(">H", len(nb)) + nb
         out += struct.pack(">Q", len(blob)) + blob
     return bytes(out), report
 
 
-def unpack_archive(blob: bytes, outdir: str):
-    """아카이브를 풀어 outdir 아래에 원래 구조로 복원."""
+def unpack_entries(blob: bytes):
+    """아카이브를 메모리상의 [(이름, 바이트), ...]로 푼다."""
     if blob[:4] != ARCHIVE_MAGIC:
         raise ValueError("올바른 .spk 아카이브가 아닙니다.")
     pos = 4
     (count,) = struct.unpack(">I", blob[pos:pos+4]); pos += 4
-    names = []
+    items = []
     for _ in range(count):
         (nl,) = struct.unpack(">H", blob[pos:pos+2]); pos += 2
         name = blob[pos:pos+nl].decode("utf-8"); pos += nl
         (bl,) = struct.unpack(">Q", blob[pos:pos+8]); pos += 8
         entry = blob[pos:pos+bl]; pos += bl
-        data = decompress(entry)
+        items.append((name, decompress(entry)))
+    return items
+
+
+def pack_folder(root: str, mode: str = "max"):
+    """폴더 안 모든 파일을 파일별 최적 압축해 아카이브로 묶는다."""
+    root = root.rstrip("/\\")
+    items = []
+    for dirpath, _, files in os.walk(root):
+        for fn in sorted(files):
+            full = os.path.join(dirpath, fn)
+            rel = os.path.relpath(full, root).replace("\\", "/")
+            items.append((rel, open(full, "rb").read()))
+    return pack_entries(items, mode)
+
+
+def unpack_archive(blob: bytes, outdir: str):
+    """아카이브를 풀어 outdir 아래에 원래 구조로 복원."""
+    names = []
+    for name, data in unpack_entries(blob):
         dest = os.path.join(outdir, name)
         os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
         with open(dest, "wb") as f:
