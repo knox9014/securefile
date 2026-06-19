@@ -107,22 +107,24 @@ class Api:
         try:
             if not paths:
                 return {"ok": False, "error": "선택된 항목이 없습니다."}
+            # 파일 목록 구성 (디스크에서 한 개씩 읽도록 경로만)
             if len(paths) == 1 and os.path.isdir(paths[0]):
-                spk, report = autopack.pack_folder(paths[0], mode)
-                base = os.path.basename(paths[0].rstrip("/\\")) or "archive"
+                root = paths[0].rstrip("/\\")
+                files = [(os.path.relpath(os.path.join(dp, fn), root).replace("\\", "/"),
+                          os.path.join(dp, fn))
+                         for dp, _, fns in os.walk(root) for fn in sorted(fns)]
+                base = os.path.basename(root) or "archive"
             else:
-                items = [(os.path.basename(p), open(p, "rb").read()) for p in paths]
-                spk, report = autopack.pack_entries(items, mode)
+                files = [(os.path.basename(p), p) for p in paths]
                 base = "archive"
-            blob = securepack.encrypt_bytes(spk, password) if password else spk
             ext = ".spkx" if password else ".spk"
             save = self._win().create_file_dialog(webview.SAVE_DIALOG, save_filename=base + ext)
             if not save:
                 return {"ok": False, "error": "저장이 취소되었습니다."}
             save = save if isinstance(save, str) else save[0]
-            with open(save, "wb") as f:
-                f.write(blob)
-            return {"ok": True, "report": report, "total": len(blob), "path": save}
+            # 스트리밍: 폴더 전체가 아니라 파일 1개씩 디스크로 흘려보냄(저RAM)
+            report = securepack.pack_stream(save, files, password, mode)
+            return {"ok": True, "report": report, "total": os.path.getsize(save), "path": save}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -134,15 +136,14 @@ class Api:
             if not r:
                 return {"ok": False, "error": "파일이 선택되지 않았습니다."}
             src = r[0]
-            blob = open(src, "rb").read()
-            if blob[:4] == securepack.ENC_MAGIC:
-                if not password:
-                    return {"ok": False, "error": "암호화 파일입니다. 비밀번호 입력 후 다시 누르세요."}
-                blob = securepack.decrypt_bytes(blob, password)
+            with open(src, "rb") as fh:
+                enc = fh.read(4) == securepack.ENC_MAGIC
+            if enc and not password:
+                return {"ok": False, "error": "암호화 파일입니다. 비밀번호 입력 후 다시 누르세요."}
             out = self._win().create_file_dialog(webview.FOLDER_DIALOG)
             if not out:
                 return {"ok": False, "error": "복원할 폴더가 선택되지 않았습니다."}
-            names = autopack.unpack_archive(blob, out[0])
+            names = securepack.unpack_stream(src, out[0], password)
             return {"ok": True, "count": len(names), "path": out[0]}
         except Exception as e:
             return {"ok": False, "error": str(e)}

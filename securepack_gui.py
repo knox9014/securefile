@@ -99,41 +99,37 @@ class App:
     def _do_pack(self, pw):
         if not self.paths:
             raise ValueError("먼저 파일이나 폴더를 선택하세요.")
-        # 디스크에서 직접 읽어 항목 구성 (base64 없음)
+        # 파일 목록(경로만) → 스트리밍으로 한 개씩 처리 (저RAM)
         if len(self.paths) == 1 and os.path.isdir(self.paths[0]):
-            spk, _ = autopack.pack_folder(self.paths[0], self._mode())
-            base = os.path.basename(self.paths[0].rstrip("/\\")) or "archive"
+            root = self.paths[0].rstrip("/\\")
+            files = [(os.path.relpath(os.path.join(dp, fn), root).replace("\\", "/"),
+                      os.path.join(dp, fn))
+                     for dp, _, fns in os.walk(root) for fn in sorted(fns)]
+            base = os.path.basename(root) or "archive"
         else:
-            items = []
-            for p in self.paths:
-                items.append((os.path.basename(p), open(p, "rb").read()))
-            spk, _ = autopack.pack_entries(items, self._mode())
+            files = [(os.path.basename(p), p) for p in self.paths]
             base = "archive"
-        blob = securepack.encrypt_bytes(spk, pw) if pw else spk
         ext = ".spkx" if pw else ".spk"
         out = filedialog.asksaveasfilename(defaultextension=ext, initialfile=base + ext)
         if not out:
             raise ValueError("저장이 취소되었습니다.")
-        with open(out, "wb") as f:
-            f.write(blob)
+        securepack.pack_stream(out, files, pw, self._mode())
         return out
 
     def _do_unpack(self, pw):
         src = filedialog.askopenfilename(filetypes=[("KnoxSecureZip", "*.spk *.spkx"), ("모든 파일", "*.*")])
         if not src:
             raise ValueError("파일이 선택되지 않았습니다.")
-        blob = open(src, "rb").read()
-        if blob[:4] == securepack.ENC_MAGIC:
+        with open(src, "rb") as fh:
+            enc = fh.read(4) == securepack.ENC_MAGIC
+        if enc and not pw:
+            pw = self.pw_entry.get()
             if not pw:
-                # 암호화 파일인데 비번 없으면 입력 요구
-                pw = self.pw_entry.get()
-                if not pw:
-                    raise ValueError("암호화 파일입니다. 비밀번호를 입력하세요.")
-            blob = securepack.decrypt_bytes(blob, pw)
+                raise ValueError("암호화 파일입니다. 비밀번호를 입력하세요.")
         outdir = filedialog.askdirectory(title="복원할 폴더 선택")
         if not outdir:
             raise ValueError("폴더가 선택되지 않았습니다.")
-        names = autopack.unpack_archive(blob, outdir)
+        names = securepack.unpack_stream(src, outdir, pw)
         return f"{outdir} ({len(names)}개 파일)"
 
     def _done(self, msg):
