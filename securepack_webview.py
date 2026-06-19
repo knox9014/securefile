@@ -8,10 +8,18 @@ securepack_webview.py - KnoxSecureZip 데스크탑 앱 (모던 UI)
 """
 
 import os
+import sys
+import json
+import tempfile
+import subprocess
+import urllib.request
 import webview
 
 import autopack
 import securepack
+
+VERSION = "1.0.0"
+REPO = "knox9014/securefile"
 
 HTML = r"""<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><title>KnoxSecureZip</title>
@@ -44,7 +52,10 @@ td,th{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);color:
 .foot{margin-top:14px;font-size:11px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px;line-height:1.6;}
 .spin{display:inline-block;width:13px;height:13px;border:2px solid #45507f;border-top-color:var(--accent);border-radius:50%;animation:r .7s linear infinite;vertical-align:-2px;margin-right:6px;}
 @keyframes r{to{transform:rotate(360deg);}}
+.banner{display:none;align-items:center;gap:10px;background:#1a2f4a;border:1px solid #2f5a8a;border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:13px;}
+.banner b{color:#9fd0ff;}.banner button{margin-left:auto;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;}
 </style></head><body><div class="card">
+<div class="banner" id="upd"></div>
 <h1>🔐 KnoxSecureZip <span class="tag">데스크탑</span></h1>
 <div class="sub">파일별 최적 압축 + 선택적 암호화 · 모든 처리는 내 컴퓨터에서만.</div>
 <div class="drop"><div class="big">📁</div><div class="t">아래 버튼으로 파일·폴더를 선택하세요</div>
@@ -88,6 +99,20 @@ $("op").onclick=async()=>{
  if(!j.ok)return err(j.error);
  ok(`복원 완료! ${j.count}개 파일 → ${j.path}`);
 };
+window.addEventListener("pywebviewready",async()=>{
+ try{
+  const u=await api().check_update();
+  if(u&&u.update){
+   const b=$("upd");b.style.display="flex";
+   b.innerHTML=`<span>🔔 새 버전 <b>v${u.latest}</b> 출시! (현재 v${u.current})</span><button id="updBtn">지금 업데이트</button>`;
+   $("updBtn").onclick=async()=>{
+    $("updBtn").disabled=true;$("updBtn").textContent="업데이트 중…";
+    const r=await api().do_update(u.url);
+    if(!r.ok){$("updBtn").disabled=false;$("updBtn").textContent="다시 시도";setSt(r.error,"err");}
+   };
+  }
+ }catch(e){}
+});
 </script></body></html>"""
 
 
@@ -145,6 +170,52 @@ class Api:
                 return {"ok": False, "error": "복원할 폴더가 선택되지 않았습니다."}
             names = securepack.unpack_stream(src, out[0], password)
             return {"ok": True, "count": len(names), "path": out[0]}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    # ----- 자동 업데이트 -----
+    def check_update(self):
+        """GitHub 최신 릴리스와 현재 버전 비교. 비공개/오류 시 조용히 update=False."""
+        try:
+            req = urllib.request.Request(
+                f"https://api.github.com/repos/{REPO}/releases/latest",
+                headers={"Accept": "application/vnd.github+json", "User-Agent": "KnoxSecureZip"})
+            data = json.loads(urllib.request.urlopen(req, timeout=6).read())
+            latest = data.get("tag_name", "").lstrip("v")
+            def parse(v): return tuple(int(x) for x in v.split("."))
+            if latest and parse(latest) > parse(VERSION):
+                url = next((a["browser_download_url"] for a in data.get("assets", [])
+                            if a["name"].lower().endswith(".exe")), data.get("html_url"))
+                return {"update": True, "latest": latest, "current": VERSION, "url": url}
+            return {"update": False, "latest": latest, "current": VERSION}
+        except Exception:
+            return {"update": False}
+
+    def do_update(self, url):
+        """새 exe를 받아 교체 후 재실행 (실행 중 exe는 못 덮으므로 헬퍼 배치가 종료 후 교체)."""
+        try:
+            if not getattr(sys, "frozen", False):
+                return {"ok": False, "error": "빌드된 exe에서만 자동 업데이트가 동작합니다."}
+            if not url:
+                return {"ok": False, "error": "다운로드 주소를 찾지 못했습니다."}
+            exe = sys.executable
+            new_exe = exe + ".new"
+            req = urllib.request.Request(url, headers={"User-Agent": "KnoxSecureZip"})
+            with urllib.request.urlopen(req, timeout=120) as r, open(new_exe, "wb") as f:
+                f.write(r.read())
+            bat = os.path.join(tempfile.gettempdir(), "ksz_update.bat")
+            pid = os.getpid()
+            with open(bat, "w", encoding="utf-8") as f:
+                f.write(
+                    "@echo off\r\n"
+                    ":wait\r\n"
+                    f'tasklist /fi "PID eq {pid}" | find "{pid}" >nul && (timeout /t 1 >nul & goto wait)\r\n'
+                    f'move /y "{new_exe}" "{exe}" >nul\r\n'
+                    f'start "" "{exe}"\r\n'
+                    'del "%~f0"\r\n')
+            subprocess.Popen(["cmd", "/c", bat], creationflags=0x08000000)  # DETACHED_PROCESS
+            self._win().destroy()                       # 앱 종료 → 배치가 교체 후 재실행
+            return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
