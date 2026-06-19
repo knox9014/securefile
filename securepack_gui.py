@@ -121,7 +121,7 @@ class App:
         if not src:
             raise ValueError("파일이 선택되지 않았습니다.")
         with open(src, "rb") as fh:
-            enc = fh.read(4) == securepack.ENC_MAGIC
+            enc = securepack.is_encrypted(fh.read(4))
         if enc and not pw:
             pw = self.pw_entry.get()
             if not pw:

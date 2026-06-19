@@ -155,7 +155,7 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/unpack":
                 b = self._body()
                 blob = base64.b64decode(b["data"])
-                if blob[:4] == securepack.ENC_MAGIC:
+                if securepack.is_encrypted(blob[:4]):
                     blob = securepack.decrypt_bytes(blob, b.get("password", ""))
                 items = autopack.unpack_entries(blob)
                 buf = io.BytesIO()

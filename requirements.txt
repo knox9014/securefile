@@ -1,3 +1,5 @@
 cryptography
 zstandard
 brotli
+argon2-cffi
+pywebview

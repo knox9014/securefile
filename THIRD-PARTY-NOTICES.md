@@ -10,6 +10,7 @@ KnoxSecureZip은 다음 오픈소스 구성요소를 사용합니다. 각 구성
 | [zstandard (python-zstandard)](https://github.com/indygreg/python-zstandard) | zstd 압축 | BSD-3-Clause |
 | [libzstd](https://github.com/facebook/zstd) | zstd 코어 | BSD-3-Clause |
 | [Brotli (Python)](https://github.com/google/brotli) | brotli 압축 | MIT |
+| [argon2-cffi](https://github.com/hynek/argon2-cffi) | Argon2id 키 유도 | MIT |
 | [pywebview](https://github.com/r0x0r/pywebview) | 데스크탑 창(UI) | BSD-3-Clause |
 | [Pillow](https://github.com/python-pillow/Pillow) | 아이콘 생성(빌드 시) | MIT-CMU (HPND) |
 | [PyInstaller](https://github.com/pyinstaller/pyinstaller) | 실행파일 패키징 | GPL-2.0 (with bootloader exception) |

@@ -18,8 +18,57 @@ import webview
 import autopack
 import securepack
 
+try:
+    import winreg
+except ImportError:
+    winreg = None
+
 VERSION = "1.0.0"
 REPO = "knox9014/knox_secure_zip"
+
+
+# ===== 윈도우 탐색기 우클릭 메뉴 등록 (HKCU, 관리자 권한 불필요) =====
+def _exe_path():
+    return sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__)
+
+# (레지스트리 루트경로, 라벨, 액션플래그)
+_MENU_ENTRIES = [
+    (r"Software\Classes\*",                          "KnoxSecureZip으로 압축", "pack"),
+    (r"Software\Classes\Directory",                  "KnoxSecureZip으로 압축", "pack"),
+    (r"Software\Classes\SystemFileAssociations\.spkx", "KnoxSecureZip으로 풀기", "open"),
+    (r"Software\Classes\SystemFileAssociations\.spk",  "KnoxSecureZip으로 풀기", "open"),
+]
+_MENU_KEY = "KnoxSecureZip"   # shell 하위 키 이름
+
+
+def _menu_register():
+    exe = _exe_path()
+    for rootpath, label, action in _MENU_ENTRIES:
+        base = rootpath + r"\shell\\" + _MENU_KEY + "." + action
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, base) as k:
+            winreg.SetValueEx(k, "", 0, winreg.REG_SZ, label)
+            winreg.SetValueEx(k, "Icon", 0, winreg.REG_SZ, exe)
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, base + r"\command") as k:
+            winreg.SetValueEx(k, "", 0, winreg.REG_SZ, f'"{exe}" --{action} "%1"')
+
+
+def _menu_unregister():
+    for rootpath, _, action in _MENU_ENTRIES:
+        base = rootpath + r"\shell\\" + _MENU_KEY + "." + action
+        for sub in (base + r"\command", base):
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, sub)
+            except OSError:
+                pass
+
+
+def _menu_registered():
+    try:
+        winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                       r"Software\Classes\*\shell\\" + _MENU_KEY + ".pack").Close()
+        return True
+    except OSError:
+        return False
 
 HTML = r"""<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><title>KnoxSecureZip</title>
@@ -69,6 +118,7 @@ td,th{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);color:
 <div class="field" id="pwf"><input type="password" id="pw" placeholder="비밀번호"></div>
 <div class="row"><button class="go" id="go">압축 + 암호화</button><button class="open" id="op">📂 열기 / 복원</button></div>
 <div class="status info" id="st"></div><div id="rep"></div>
+<div id="menurow" style="margin-top:10px;font-size:12px;text-align:center;color:var(--muted);"></div>
 <div class="foot">엔진: 파일별 자동선택(zstd·bz2·lzma·brotli) · 암호화: AES-256-GCM<br>파일이 인터넷으로 전송되지 않습니다.<br><span style="color:#9fb0ff;">만든 사람: knox9014 · MIT 라이선스</span></div>
 </div>
 <script>
@@ -99,8 +149,28 @@ $("op").onclick=async()=>{
  if(!j.ok)return err(j.error);
  ok(`복원 완료! ${j.count}개 파일 → ${j.path}`);
 };
+async function refreshMenu(){
+ try{
+  const ms=await api().menu_status(); if(!ms.available)return;
+  const m=$("menurow");
+  if(ms.registered){
+   m.innerHTML='🖱 우클릭 메뉴 등록됨 · <a href="#" id="moff" style="color:#9fb0ff;">해제</a>';
+   $("moff").onclick=async(e)=>{e.preventDefault();await api().unregister_menu();refreshMenu();};
+  }else{
+   m.innerHTML='<a href="#" id="mon" style="color:#9fb0ff;">🖱 탐색기 우클릭 메뉴에 추가</a>';
+   $("mon").onclick=async(e)=>{e.preventDefault();const r=await api().register_menu();if(r.ok){ok("우클릭 메뉴 등록 완료!");}else{err(r.error);}refreshMenu();};
+  }
+ }catch(e){}
+}
 window.addEventListener("pywebviewready",async()=>{
  try{
+  const init=await api().get_initial();
+  if(init&&init.path){ paths=[init.path];
+   $("sel").textContent=(init.action==="open"?"📂 ":"📄 ")+init.path;
+   if(init.action==="open") ok('암호 입력 후 "열기 / 복원"을 누르세요.');
+   else ok('모드·비밀번호 설정 후 "압축"을 누르세요.');
+  }
+  refreshMenu();
   const u=await api().check_update();
   if(u&&u.update){
    const b=$("upd");b.style.display="flex";
@@ -117,6 +187,32 @@ window.addEventListener("pywebviewready",async()=>{
 
 
 class Api:
+    def __init__(self, initial=None):
+        self.initial = initial or {"path": None, "action": None}
+
+    def get_initial(self):
+        return self.initial
+
+    def menu_status(self):
+        return {"available": winreg is not None,
+                "registered": _menu_registered() if winreg else False}
+
+    def register_menu(self):
+        if not winreg:
+            return {"ok": False, "error": "Windows 전용 기능입니다."}
+        try:
+            _menu_register(); return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def unregister_menu(self):
+        if not winreg:
+            return {"ok": False, "error": "Windows 전용 기능입니다."}
+        try:
+            _menu_unregister(); return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     def _win(self):
         return webview.windows[0]
 
@@ -162,7 +258,7 @@ class Api:
                 return {"ok": False, "error": "파일이 선택되지 않았습니다."}
             src = r[0]
             with open(src, "rb") as fh:
-                enc = fh.read(4) == securepack.ENC_MAGIC
+                enc = securepack.is_encrypted(fh.read(4))
             if enc and not password:
                 return {"ok": False, "error": "암호화 파일입니다. 비밀번호 입력 후 다시 누르세요."}
             out = self._win().create_file_dialog(webview.FOLDER_DIALOG)
@@ -221,8 +317,16 @@ class Api:
 
 
 def main():
-    webview.create_window("KnoxSecureZip", html=HTML, js_api=Api(),
-                          width=540, height=680, background_color="#0b0e1a")
+    initial = {"path": None, "action": None}
+    args = sys.argv[1:]
+    if args:
+        if args[0] in ("--pack", "--open") and len(args) >= 2:
+            initial["action"] = args[0][2:]; initial["path"] = args[1]
+        elif os.path.exists(args[0]):
+            initial["path"] = args[0]
+            initial["action"] = "open" if args[0].lower().endswith((".spk", ".spkx")) else "pack"
+    webview.create_window("KnoxSecureZip", html=HTML, js_api=Api(initial),
+                          width=540, height=710, background_color="#0b0e1a")
     webview.start()
 
 

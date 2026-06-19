@@ -26,16 +26,72 @@ from cryptography.hazmat.primitives import hashes
 
 import autopack
 
-ENC_MAGIC = b"SPKE"        # 암호화된 컨테이너
-ITER = 200_000
+try:
+    from argon2.low_level import hash_secret_raw, Type as _ArgonType
+except ImportError:
+    hash_secret_raw = None
+
+ENC_MAGIC = b"SPKE"        # 구 컨테이너 (PBKDF2) — 하위호환 복호화용
+ENC_MAGIC2 = b"SPK2"       # 신 컨테이너 (Argon2id, 기본)
+ENC_MAGICS = (ENC_MAGIC, ENC_MAGIC2)
+ITER = 200_000             # PBKDF2 반복(구/대체)
 SALT = 16
 NPFX = 8
 CHUNK = 1 << 20            # 1MB 청크
+# Argon2id 기본 파라미터 (64MiB, time 3, 병렬 4) — 무차별 대입 방어 강화
+A_MEM, A_TIME, A_PAR = 65536, 3, 4
+KDF_PBKDF2, KDF_ARGON2 = 0, 1
 
 
-def _derive(password: str, salt: bytes) -> bytes:
+def is_encrypted(head4: bytes) -> bool:
+    return head4[:4] in ENC_MAGICS
+
+
+def _derive_pbkdf2(password: str, salt: bytes) -> bytes:
     kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=ITER)
     return kdf.derive(password.encode("utf-8"))
+
+
+def _derive_argon2(password: str, salt: bytes, mem=A_MEM, time=A_TIME, par=A_PAR) -> bytes:
+    return hash_secret_raw(password.encode("utf-8"), salt, time_cost=time,
+                           memory_cost=mem, parallelism=par, hash_len=32, type=_ArgonType.ID)
+
+
+def _write_header(password: str):
+    """신 컨테이너(SPK2) 헤더 바이트 + AESGCM 반환. Argon2id 없으면 PBKDF2로 자동 대체."""
+    salt = os.urandom(SALT); npfx = os.urandom(NPFX)
+    if hash_secret_raw is not None:
+        key = _derive_argon2(password, salt)
+        hdr = ENC_MAGIC2 + bytes([KDF_ARGON2]) + struct.pack(">IIB", A_MEM, A_TIME, A_PAR) + salt + npfx
+    else:
+        key = _derive_pbkdf2(password, salt)
+        hdr = ENC_MAGIC2 + bytes([KDF_PBKDF2]) + struct.pack(">I", ITER) + salt + npfx
+    return hdr, npfx, AESGCM(key)
+
+
+def _parse_header(readn, password):
+    """readn(n)으로 헤더를 읽어 (npfx, AESGCM) 반환. SPK2/SPKE 모두 지원."""
+    magic = readn(4)
+    if magic == ENC_MAGIC2:
+        kdf = readn(1)[0]
+        if kdf == KDF_ARGON2:
+            mem, time, par = struct.unpack(">IIB", readn(9))
+            salt = readn(SALT); npfx = readn(NPFX)
+            if hash_secret_raw is None:
+                raise ValueError("이 파일은 Argon2로 암호화됨 — argon2-cffi 설치 필요")
+            key = _derive_argon2(password, salt, mem, time, par)
+        else:
+            (it,) = struct.unpack(">I", readn(4))
+            salt = readn(SALT); npfx = readn(NPFX)
+            global ITER
+            kdf2 = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=it)
+            key = kdf2.derive(password.encode("utf-8"))
+    elif magic == ENC_MAGIC:                       # 구 형식(PBKDF2)
+        salt = readn(SALT); npfx = readn(NPFX)
+        key = _derive_pbkdf2(password, salt)
+    else:
+        raise ValueError("올바른 암호화 컨테이너가 아닙니다.")
+    return npfx, AESGCM(key)
 
 
 # ===== 스트리밍(저RAM) 처리 =====
@@ -46,11 +102,10 @@ class _EncWriter:
     """스트리밍 청크 AES-256-GCM 쓰기 (encrypt_bytes와 동일 포맷)."""
     def __init__(self, fh, password):
         self.fh = fh
-        salt = os.urandom(SALT)
-        npfx = os.urandom(NPFX)
-        self.aes = AESGCM(_derive(password, salt))
+        hdr, npfx, aes = _write_header(password)
+        fh.write(hdr)
+        self.aes = aes
         self.npfx = npfx
-        fh.write(ENC_MAGIC); fh.write(salt); fh.write(npfx)
         self.ctr = 0
         self.buf = bytearray()
 
@@ -74,9 +129,8 @@ class _EncWriter:
 
 def _dec_stream(fh, password):
     """암호화 파일에서 복호화된 평문 바이트를 청크 단위로 내보내는 제너레이터."""
-    fh.read(4)                              # ENC_MAGIC (이미 확인됨)
-    salt = fh.read(SALT); npfx = fh.read(NPFX)
-    aes = AESGCM(_derive(password, salt)); ctr = 0
+    npfx, aes = _parse_header(fh.read, password)
+    ctr = 0
     while True:
         head = fh.read(5)
         if len(head) < 5:
@@ -132,7 +186,7 @@ def pack_stream(out_path, files, password="", mode="max"):
 def unpack_stream(in_path, out_dir, password=""):
     """암호화/비암호화 아카이브를 스트리밍 복호화·복원. RAM ≈ 가장 큰 파일 1개."""
     with open(in_path, "rb") as f:
-        if f.read(4) == ENC_MAGIC:
+        if is_encrypted(f.read(4)):
             f.seek(0)
             reader = _BufReader(_dec_stream(f, password))
         else:
@@ -156,11 +210,9 @@ def unpack_stream(in_path, out_dir, password=""):
 
 
 def encrypt_bytes(data: bytes, password: str) -> bytes:
-    """이미 압축된 바이트를 청크 AES-256-GCM으로 암호화."""
-    salt = os.urandom(SALT)
-    npfx = os.urandom(NPFX)
-    aes = AESGCM(_derive(password, salt))
-    out = bytearray(ENC_MAGIC); out += salt; out += npfx
+    """이미 압축된 바이트를 청크 AES-256-GCM으로 암호화 (Argon2id 헤더)."""
+    hdr, npfx, aes = _write_header(password)
+    out = bytearray(hdr)
     ctr = 0; pos = 0; n = len(data)
     while True:
         chunk = data[pos:pos + CHUNK]; pos += len(chunk)
@@ -176,16 +228,16 @@ def encrypt_bytes(data: bytes, password: str) -> bytes:
 
 
 def decrypt_bytes(blob: bytes, password: str) -> bytes:
-    if blob[:4] != ENC_MAGIC:
-        raise ValueError("올바른 암호화 컨테이너가 아닙니다.")
-    salt = blob[4:4 + SALT]
-    npfx = blob[4 + SALT:4 + SALT + NPFX]
-    aes = AESGCM(_derive(password, salt))
-    pos = 4 + SALT + NPFX; ctr = 0; out = bytearray()
-    while True:
+    cur = [0]
+    def rd(n):
+        s = blob[cur[0]:cur[0] + n]; cur[0] += n; return s
+    npfx, aes = _parse_header(rd, password)
+    ctr = 0; out = bytearray()
+    while cur[0] < len(blob):
+        pos = cur[0]
         final = blob[pos]
-        (ln,) = struct.unpack(">I", blob[pos + 1:pos + 5]); pos += 5
-        ct = blob[pos:pos + ln]; pos += ln
+        (ln,) = struct.unpack(">I", blob[pos + 1:pos + 5]); cur[0] += 5
+        ct = blob[cur[0]:cur[0] + ln]; cur[0] += ln
         nonce = npfx + struct.pack(">I", ctr)
         aad = struct.pack(">I?", ctr, bool(final))
         try:
@@ -211,7 +263,7 @@ def pack(folder: str, out_path: str, password: str = "", mode: str = "max"):
 def unpack(in_path: str, out_dir: str, password: str = ""):
     """입력 파일을 (암호화면 복호화 후) 풀어 복원."""
     blob = open(in_path, "rb").read()
-    if blob[:4] == ENC_MAGIC:
+    if is_encrypted(blob[:4]):
         if not password:
             raise ValueError("암호화된 파일입니다. 비밀번호가 필요합니다.")
         blob = decrypt_bytes(blob, password)
@@ -240,7 +292,7 @@ def main():
               f"({out_sz/tot*100:.1f}%){enc}  → {dst}")
     else:
         pw = ""
-        if open(src, "rb").read(4) == ENC_MAGIC:
+        if is_encrypted(open(src, "rb").read(4)):
             pw = getpass.getpass("비밀번호: ")
         names = unpack(src, dst, pw)
         print(f"{len(names)}개 파일 복원 완료 → {dst}")
