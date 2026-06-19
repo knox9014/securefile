@@ -5,7 +5,7 @@
 **만든 사람: [knox9014](https://github.com/knox9014)** · 라이선스: **MIT** ([LICENSE](LICENSE), [제3자 고지](THIRD-PARTY-NOTICES.md))
 
 ## 구성
-- `index.html` — **브라우저 웹 앱 (설치 불필요, 가장 편함)** ⭐
+- `index.html` — **웹사이트 + 브라우저 도구 (설치 불필요)** ⭐ · `website.html`(동일)
 - `securefile.py` — 핵심 엔진 + 명령줄(CLI)
 - `securefile_gui.py` — 파이썬 그래픽 인터페이스(GUI)
 
