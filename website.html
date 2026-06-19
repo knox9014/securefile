@@ -35,8 +35,21 @@
         -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
   .hero p{font-size:17px;color:var(--muted);max-width:620px;margin:0 auto 28px;}
   .cta{display:inline-block;background:var(--accent);color:#fff;font-weight:600;
-       padding:13px 28px;border-radius:11px;font-size:15px;}
+       padding:13px 28px;border-radius:11px;font-size:15px;margin:6px;}
   .cta:hover{filter:brightness(1.1);}
+  .cta.alt{background:transparent;border:1px solid var(--line);color:var(--txt);}
+  .cta.alt:hover{border-color:var(--accent);}
+  .dl-card{display:flex;align-items:center;gap:18px;background:var(--card);border:1px solid var(--line);
+       border-radius:16px;padding:22px;max-width:640px;margin:0 auto;}
+  .dl-ic{font-size:40px;}
+  .dl-body{flex:1;}.dl-body h3{margin:0 0 4px;font-size:17px;}
+  .dl-body p{margin:0 0 4px;font-size:13.5px;color:var(--muted);}
+  .dl-meta{font-size:12px;color:var(--accent2);}
+  .dl-btn{background:var(--accent2);color:#06241a;font-weight:700;padding:12px 22px;border-radius:11px;font-size:14px;white-space:nowrap;}
+  .dl-btn:hover{filter:brightness(1.1);}
+  .dl-note{max-width:640px;margin:18px auto 0;font-size:13px;color:var(--muted);background:var(--bg2);
+       border:1px solid var(--line);border-radius:12px;padding:14px 16px;line-height:1.6;}
+  @media(max-width:600px){.dl-card{flex-direction:column;text-align:center;}}
   .trust{margin-top:18px;font-size:13px;color:var(--muted);}
 
   section{padding:54px 0;}
@@ -107,6 +120,7 @@
   <div class="logo">🔐 SecureFile</div>
   <div class="links">
     <a href="#features">기능</a>
+    <a href="#download">다운로드</a>
     <a href="#how">작동 방식</a>
     <a href="#tool">바로 사용</a>
   </div>
@@ -117,9 +131,29 @@
   <h1>파일을 <span class="g">압축하고 암호화</span>하세요<br>설치 없이, 안전하게.</h1>
   <p>드래그앤드롭 한 번으로 파일·폴더를 압축하고, 원하면 군용 등급 암호화(AES-256-GCM)까지.
      모든 처리는 당신의 브라우저 안에서만 일어나며, 서버로 아무것도 전송되지 않습니다.</p>
-  <a class="cta" href="#tool">지금 사용하기 →</a>
+  <a class="cta" href="#tool">브라우저에서 바로 사용 →</a>
+  <a class="cta alt" href="#download">⬇ 풀 버전 다운로드</a>
   <div class="trust">서버 없음 · 계정 없음 · 추적 없음 · 완전 무료</div>
 </div></header>
+
+<section id="download"><div class="wrap">
+  <h2 class="sec">풀 버전 다운로드</h2>
+  <p class="sec-sub">파일별 최적 압축(zstd·bz2·lzma·brotli)까지 쓰는 데스크탑 버전. 내 컴퓨터에서 실행됩니다.</p>
+  <div class="dl-card">
+    <div class="dl-ic">💾</div>
+    <div class="dl-body">
+      <h3>SecureFile for Windows</h3>
+      <p>단일 실행파일(.exe) · 설치 불필요 · 더블클릭하면 브라우저에 도구가 열립니다.</p>
+      <div class="dl-meta">약 14MB · Windows 64-bit · 무료</div>
+    </div>
+    <a class="dl-btn" href="https://github.com/knox9014/securefile/releases/latest/download/SecureFile.exe">⬇ 다운로드</a>
+  </div>
+  <div class="dl-note">
+    <b>왜 다운로드인가요?</b> 풀 엔진은 당신의 컴퓨터에서 직접 실행됩니다 —
+    파일이 인터넷으로 전송되지 않아 <b>완벽한 프라이버시</b>를 지키면서도 최고 압축률을 냅니다.
+    가벼운 사용은 위 "바로 사용"의 브라우저 버전으로 충분합니다.
+  </div>
+</div></section>
 
 <section id="features"><div class="wrap">
   <h2 class="sec">왜 SecureFile인가</h2>
