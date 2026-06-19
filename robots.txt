@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://knox9014.github.io/knox_secure_zip/sitemap.xml
