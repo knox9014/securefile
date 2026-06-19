@@ -23,7 +23,7 @@ try:
 except ImportError:
     winreg = None
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 REPO = "knox9014/knox_secure_zip"
 
 
